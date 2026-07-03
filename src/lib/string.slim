@@ -1,22 +1,19 @@
 import * as crypto from "node:crypto"
 
-export class StringTool {
-    static len(string: string) {
+export const string: object = {
+    len(string: string) {
         if(typeof string == "string") return string.length
-    }
-
-    static truncate(str: string, maxLength: int) {
+    },
+    truncate(str: string, maxLength: int) {
         if (str.length > maxLength) {
             return str.slice(0, maxLength) + '...';
         }
         return str;
-    }
-
-    static hash(str: string) {
+    },
+    hash(str: string) {
         return crypto.createHash("sha256").update(str).digest("hex")
-    }
-
-    static quickHash(str: string) {
+    },
+    quickHash(str: string) {
         let hash = 0;
         for (let i = 0; i < str.length; i++) {
             hash = (hash << 5) - hash + str.charCodeAt(i);
@@ -25,3 +22,5 @@ export class StringTool {
         return hash;
     }
 }
+
+lock string;

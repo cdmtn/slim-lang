@@ -1,0 +1,102 @@
+export class Request {
+    constructor(options: object = {}) {
+        this.baseURL = options.baseURL || ""
+        this.headers = options.headers || {}
+        this.timeout = options.timeout || 10000
+    }
+
+    async request(url, options = {}) {
+        const controller = new AbortController()
+
+        const timeout = setTimeout(() => {
+            controller.abort()
+        }, this.timeout)
+
+        try {
+            const response = await fetch(this.baseURL + url, {
+                ...options,
+                headers: {
+                    ...this.headers,
+                    ...options.headers
+                },
+                signal: controller.signal
+            })
+
+            clearTimeout(timeout)
+
+            const type = response.headers.get("content-type") || ""
+
+            let data
+
+            if (type.includes("application/json")) {
+                data = await response.json()
+            } else if (type.includes("text/")) {
+                data = await response.text()
+            } else {
+                data = await response.blob()
+            }
+
+            if (!response.ok) {
+                throw {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data
+                }
+            }
+
+            return data
+        } finally {
+            clearTimeout(timeout)
+        }
+    }
+
+    get(url, options = {}) {
+        return this.request(url, {
+            ...options,
+            method: "GET"
+        })
+    }
+
+    post(url, body, options = {}) {
+        return this.request(url, {
+            ...options,
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...options.headers
+            },
+            body: JSON.stringify(body)
+        })
+    }
+
+    put(url, body, options = {}) {
+        return this.request(url, {
+            ...options,
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json",
+                ...options.headers
+            },
+            body: JSON.stringify(body)
+        })
+    }
+
+    patch(url, body, options = {}) {
+        return this.request(url, {
+            ...options,
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                ...options.headers
+            },
+            body: JSON.stringify(body)
+        })
+    }
+
+    delete(url, options = {}) {
+        return this.request(url, {
+            ...options,
+            method: "DELETE"
+        })
+    }
+}

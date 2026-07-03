@@ -36,12 +36,167 @@ export function stripComments(code) {
     return result
 }
 
+function runStage(text, register) {
+    const replacements = []
+
+    function collect(pattern, handler) {
+        const re = new RegExp(pattern.source,
+            pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g"
+        )
+        let match
+        while ((match = re.exec(text)) !== null) {
+            replacements.push({
+                start: match.index,
+                end: match.index + match[0].length,
+                replacement: handler(...match)
+            })
+        }
+    }
+
+    function collectCustom(matcher, handler) {
+        let i = 0
+        while (i < text.length) {
+            const result = matcher(text, i)
+            if (!result) { i++; continue }
+
+            replacements.push({
+                start: result.start,
+                end: result.end,
+                replacement: handler(result)
+            })
+            i = result.end
+        }
+    }
+
+    register(collect, collectCustom)
+
+    replacements.sort((a, b) => a.start - b.start)
+
+    const filtered = []
+    let lastEnd = 0
+    for (const r of replacements) {
+        if (r.start >= lastEnd) {
+            filtered.push(r)
+            lastEnd = r.end
+        }
+    }
+
+    const s = new MagicString(text)
+    for (const { start, end, replacement } of filtered) {
+        s.overwrite(start, end, replacement)
+    }
+
+    return s.toString()
+}
+
 export function preprocess(code, sourceFile = "input.ps") {
     let preprocessed = stripComments(code)
     preprocessed = replaceOperator(preprocessed, "sizeof", "__sizeof__")
     preprocessed = replaceOperator(preprocessed, "kindof", "type")
     preprocessed = replaceOperator(preprocessed, "empty", "__is_empty__")
 
+    // Stage 1: functions/methods/arrows
+    preprocessed = runStage(preprocessed, (collect, collectCustom) => {
+        // static async method
+        collect(
+            /\bstatic\s+async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/g,
+            (_, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                if (!checks) return `static async ${name}(${signature}) {`
+                return `static async ${name}(${signature}) {\n    ${checks}`
+            }
+        )
+
+        // static method
+        collect(
+            /\bstatic\s+(?!async\s)(#?[\w$]+)\s*\(([^)]*)\)\s*\{/g,
+            (_, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                if (!checks) return `static ${name}(${signature}) {`
+                return `static ${name}(${signature}) {\n    ${checks}`
+            }
+        )
+
+        // async method
+        collect(
+            /^([ \t]*)async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/gm,
+            (_, indent, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                const kw = indent ? "async" : "async function"
+                if (!checks) return `${indent}${kw} ${name}(${signature}) {`
+                return `${indent}${kw} ${name}(${signature}) {\n    ${checks}`
+            }
+        )
+
+        // default method
+        collect(
+            /^([ \t]*)(?!if\b|else\b|for\b|while\b|switch\b|catch\b|do\b|with\b|return\b|function\b|class\b|try\b|finally\b|async\b)([\w$]+)\s*\(([^)]*)\)\s*\{/gm,
+            (_, indent, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                const kw = indent ? "" : "function "
+                if (!checks) return `${indent}${kw}${name}(${signature}) {`
+                return `${indent}${kw}${name}(${signature}) {\n    ${checks}`
+            }
+        )
+
+        // arrow functions (block body)
+        collect(
+            /\b(let|const|var)\s+([\w$]+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>\s*\{/g,
+            (match, keyword, name, asyncKw, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                if (!checks) return `${keyword} ${name} = ${asyncKw ?? ""}(${signature}) => {`
+                return `${keyword} ${name} = ${asyncKw ?? ""}(${signature}) => {\n    ${checks}`
+            }
+        )
+
+        // arrow functions (expression body)
+        collectCustom(
+            (src, i) => {
+                const re = /\b(let|const|var)\s+([\w$]+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>\s*(?!\{)/y
+                re.lastIndex = i
+                const m = re.exec(src)
+                if (!m) return null
+                const { expr, end } = extractExprRaw(src, i + m[0].length)
+                return { start: i, end, keyword: m[1], name: m[2], asyncKw: m[3], args: m[4], expr }
+            },
+            ({ keyword, name, asyncKw, args, expr }) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                const head = `${keyword} ${name} = ${asyncKw ?? ""}(${signature}) =>`
+                if (!checks) return `${head} ${expr}`
+                return `${head} {\n    ${checks}\n    return ${expr}\n}`
+            }
+        )
+
+        // func declaration (async)
+        collect(
+            /\basync\s+func\s+([\w$]+)\s*\(([^)]*)\)\s*\{/g,
+            (_, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                if (!checks) return `async function ${name}(${signature}) {`
+                return `async function ${name}(${signature}) {\n    ${checks}`
+            }
+        )
+
+        // func declaration
+        collect(
+            /\bfunc\s+([\w$]+)\s*\(([^)]*)\)\s*\{/g,
+            (_, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                if (!checks) return `function ${name}(${signature}) {`
+                return `function ${name}(${signature}) {\n    ${checks}`
+            }
+        )
+    })
+
+    // Stage 2: struct/component/decl w/ type/lock
     const s = new MagicString(preprocessed)
 
     const replacements = []
@@ -94,8 +249,8 @@ export function preprocess(code, sourceFile = "input.ps") {
         /use\s+"([^"]+)"\s*;?/g,
         (_, source) => `__use_all__(${JSON.stringify(source)})\n`
     )
-    // 
 
+    // component
     collect(
         /component\s+([a-zA-Z_$][\w$]*)\s*\{([\s\S]*?)\n\}/g,
         (_, name, body) => {
@@ -115,6 +270,7 @@ export function preprocess(code, sourceFile = "input.ps") {
             return `class ${name} {${body}\n}`
         }
     )
+    // struct
     collect(
         /struct\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/g,
         (_, name, body) => {
@@ -139,6 +295,7 @@ export function preprocess(code, sourceFile = "input.ps") {
             return `__def_struct__("${name}", { ${fields} })`
         }
     )
+    // enum
     collect(
         /enum\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/g,
         (_, name, body) => {
@@ -167,12 +324,11 @@ export function preprocess(code, sourceFile = "input.ps") {
         }
     )
 
-    // capitalized types (structs/classes)
+    // capitalized types (structs) — strip annotation only, no runtime check
     collect(
         /\b(let|const|var)\s+([\w$]+)\s*:\s*[A-Z][\w$]*(?:<[A-Z][\w$]*>)?\s*=/g,
         (_, keyword, name) => `${keyword} ${name} =`
     )
-    // 
 
     // decl w/ type
     collectCustom(
@@ -196,6 +352,28 @@ export function preprocess(code, sourceFile = "input.ps") {
             const m = re.exec(src)
             if (!m) return null
             if ('=+-*/%&|^<>!'.includes(src[m.index + m[0].length])) return null
+
+            let j = i - 1
+            while (j >= 0 && /\s/.test(src[j])) j--
+            if (src[j] === ':') return null
+
+            if (/\b(let|const|var)\s*$/.test(src.slice(Math.max(0, i - 8), i))) return null
+
+            {
+                let depth = 0
+                let k = i - 1
+                while (k >= 0) {
+                    const c = src[k]
+                    if (c === ';' || c === '{' || c === '}') break
+                    if (c === ')') depth++
+                    else if (c === '(') {
+                        if (depth === 0) return null
+                        depth--
+                    }
+                    k--
+                }
+            }
+
             const { expr, end } = extractExprRaw(src, i + m[0].length)
             return { start: i, end, name: m[1], expr }
         },
@@ -224,7 +402,6 @@ export function preprocess(code, sourceFile = "input.ps") {
             return `${source}${chain}`
         }
     )
-    // 
 
     // lock const / lock operator
     collectCustom(
@@ -250,109 +427,6 @@ export function preprocess(code, sourceFile = "input.ps") {
         },
         ({ expr }) => `__lock_object__(${expr})`
     )
-    //
-
-    // functions declaration
-    // static async method
-    collect(
-        /\bstatic\s+async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/g,
-        (_, name, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `static async ${name}(${signature}) {`
-            return `static async ${name}(${signature}) {\n    ${checks}`
-        }
-    )
-
-    // static method
-    collect(
-        /\bstatic\s+(?!async\s)(#?[\w$]+)\s*\(([^)]*)\)\s*\{/g,
-        (_, name, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `static ${name}(${signature}) {`
-            return `static ${name}(${signature}) {\n    ${checks}`
-        }
-    )
-
-    // async method: It's the same as the default method, but for async
-    collect(
-        /^([ \t]*)async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/gm,
-        (_, indent, name, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            const kw = indent ? "async" : "async function"
-            if (!checks) return `${indent}${kw} ${name}(${signature}) {`
-            return `${indent}${kw} ${name}(${signature}) {\n    ${checks}`
-        }
-    )
-
-    // default method: indented - class method (bare), unindented - top-level (function)
-    collect(
-        /^([ \t]*)(?!if\b|else\b|for\b|while\b|switch\b|catch\b|do\b|with\b|return\b|function\b|class\b|try\b|finally\b|async\b)([\w$]+)\s*\(([^)]*)\)\s*\{/gm,
-        (_, indent, name, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            const kw = indent ? "" : "function "
-            if (!checks) return `${indent}${kw}${name}(${signature}) {`
-            return `${indent}${kw}${name}(${signature}) {\n    ${checks}`
-        }
-    )
-    //
-
-    // arrow functions (=> { ... })
-    collect(
-        /\b(let|const|var)\s+([\w$]+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>\s*\{/g,
-        (match, keyword, name, asyncKw, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `${keyword} ${name} = ${asyncKw ?? ""}(${signature}) => {`
-            return `${keyword} ${name} = ${asyncKw ?? ""}(${signature}) => {\n    ${checks}`
-        }
-    )
-
-    // arrow functions (=> x, w/o brackets)
-    collectCustom(
-        (src, i) => {
-            const re = /\b(let|const|var)\s+([\w$]+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>\s*(?!\{)/y
-            re.lastIndex = i
-            const m = re.exec(src)
-            if (!m) return null
-            const { expr, end } = extractExprRaw(src, i + m[0].length)
-            return { start: i, end, keyword: m[1], name: m[2], asyncKw: m[3], args: m[4], expr }
-        },
-        ({ keyword, name, asyncKw, args, expr }) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            const head = `${keyword} ${name} = ${asyncKw ?? ""}(${signature}) =>`
-            if (!checks) return `${head} ${expr}`
-            return `${head} {\n    ${checks}\n    return ${expr}\n}`
-        }
-    )
-    //
-
-    // func declaration (async)
-    collect(
-        /\basync\s+func\s+([\w$]+)\s*\(([^)]*)\)\s*\{/g,
-        (_, name, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `async function ${name}(${signature}) {`
-            return `async function ${name}(${signature}) {\n    ${checks}`
-        }
-    )
-
-    // func declaration
-    collect(
-        /\bfunc\s+([\w$]+)\s*\(([^)]*)\)\s*\{/g,
-        (_, name, args) => {
-            const parsed = parseTypedArgs(args)
-            const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `function ${name}(${signature}) {`
-            return `function ${name}(${signature}) {\n    ${checks}`
-        }
-    )
-    //
 
     replacements.sort((a, b) => a.start - b.start)
 
@@ -440,9 +514,31 @@ function extractExprRaw(str, startPos) {
             while (i < str.length) {
                 if (str[i] === '\\') { i += 2; continue }
 
-                if (quote === '`' && str[i] === '$' && str[i+1] === '{') {
-                    i += 2; depth++; continue
+                if (quote === '`' && str[i] === '$' && str[i + 1] === '{') {
+                    i += 2
+                    let interpDepth = 1
+                    while (i < str.length && interpDepth > 0) {
+                        const c = str[i]
+                        if (c === '\\') { i += 2; continue }
+
+                        if (c === '"' || c === "'" || c === '`') {
+                            const innerQuote = c
+                            i++
+                            while (i < str.length) {
+                                if (str[i] === '\\') { i += 2; continue }
+                                if (str[i] === innerQuote) { i++; break }
+                                i++
+                            }
+                            continue
+                        }
+
+                        if (c === '{') { interpDepth++; i++; continue }
+                        if (c === '}') { interpDepth--; i++; continue }
+                        i++
+                    }
+                    continue
                 }
+
                 if (str[i] === quote) { i++; break }
                 i++
             }
