@@ -167,8 +167,7 @@ export function preprocess(code, sourceFile = "input.ps") {
         }
     )
 
-    // capitalized types 
-
+    // capitalized types (structs/classes)
     collect(
         /\b(let|const|var)\s+([\w$]+)\s*:\s*[A-Z][\w$]*(?:<[A-Z][\w$]*>)?\s*=/g,
         (_, keyword, name) => `${keyword} ${name} =`
@@ -276,30 +275,32 @@ export function preprocess(code, sourceFile = "input.ps") {
         }
     )
 
-    // async class method (w/o static)
+    // async method: It's the same as the default method, but for async
     collect(
-        /^\s*async\s+([\w$]+)\s*\(([^)]*)\)\s*\{/gm,
-        (_, name, args) => {
+        /^([ \t]*)async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/gm,
+        (_, indent, name, args) => {
             const parsed = parseTypedArgs(args)
             const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `async ${name}(${signature}) {`
-            return `async ${name}(${signature}) {\n    ${checks}`
+            const kw = indent ? "async" : "async function"
+            if (!checks) return `${indent}${kw} ${name}(${signature}) {`
+            return `${indent}${kw} ${name}(${signature}) {\n    ${checks}`
         }
     )
 
-    // default class method (w/o static, w/o async)
+    // default method: indented - class method (bare), unindented - top-level (function)
     collect(
-        /^\s*(?!if\b|else\b|for\b|while\b|switch\b|catch\b|do\b|with\b|return\b|function\b|class\b|try\b|finally\b)([\w$]+)\s*\(([^)]*)\)\s*\{/gm,
-        (_, name, args) => {
+        /^([ \t]*)(?!if\b|else\b|for\b|while\b|switch\b|catch\b|do\b|with\b|return\b|function\b|class\b|try\b|finally\b|async\b)([\w$]+)\s*\(([^)]*)\)\s*\{/gm,
+        (_, indent, name, args) => {
             const parsed = parseTypedArgs(args)
             const { signature, checks } = buildTypedArgsResult(parsed, name)
-            if (!checks) return `${name}(${signature}) {`
-            return `${name}(${signature}) {\n    ${checks}`
+            const kw = indent ? "" : "function "
+            if (!checks) return `${indent}${kw}${name}(${signature}) {`
+            return `${indent}${kw}${name}(${signature}) {\n    ${checks}`
         }
     )
     //
 
-    // arrow functions (блочное тело: => { ... })
+    // arrow functions (=> { ... })
     collect(
         /\b(let|const|var)\s+([\w$]+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>\s*\{/g,
         (match, keyword, name, asyncKw, args) => {
@@ -310,7 +311,7 @@ export function preprocess(code, sourceFile = "input.ps") {
         }
     )
 
-    // arrow functions (тело-выражение: => x, без скобок)
+    // arrow functions (=> x, w/o brackets)
     collectCustom(
         (src, i) => {
             const re = /\b(let|const|var)\s+([\w$]+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>\s*(?!\{)/y
