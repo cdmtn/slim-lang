@@ -23,4 +23,9 @@ log(kindof 1.5) // float
 const a = { name: "John" }
 lock a;
 
-a.name = "Arthur"
+a.name = "Arthur" // Error
+
+// instant lock
+
+lock const b = { name: "John" }
+b.name = "Mike" // Error

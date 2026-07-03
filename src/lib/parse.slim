@@ -1,0 +1,27 @@
+import fs from "node:fs/promises"
+import path from "node:path"
+
+export class ReadError extends Error {}
+
+export class Read {
+    static async JSON(fpath) {
+        try {
+            const filePath: string = path.join(fpath); 
+            const data: function = await fs.readFile(filePath, 'utf8');
+
+            return JSON.parse(data)
+        } catch (err) {
+            throw new ReadError(err)
+        }
+    }
+    static async Text(fpath) {
+        try {
+            const filePath: string = path.join(fpath); 
+            const data: function = await fs.readFile(filePath, 'utf8');
+
+            return data
+        } catch (err) {
+            throw new ReadError(err)
+        }
+    }
+}

@@ -1,0 +1,15 @@
+// simple math add function
+const add = (x: int | float, y: int | float) => {
+    return x + y
+}
+
+log(add(2, 2)) // success
+log(add(2, 2)) // TypeError: function "add": argument<0> "x" expected int or float, got string
+
+// dynamic check for variables
+
+let num: int = 1
+num = 1.5 // Error: The variable "num" is of type int, but it was redefined with type float
+
+let superNumber: int | float = 3
+superNumber = 3.5 // success

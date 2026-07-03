@@ -1,0 +1,23 @@
+const oldSort = Array.prototype.sort;
+
+Array.prototype.sort = (compareFn) => {
+    if (compareFn) return oldSort.call(this, compareFn);
+
+    if (this.every(v => typeof v === "number")) {
+        return oldSort.call(this, (a, b) => a - b);
+    }
+
+    return oldSort.call(this);
+};
+
+func range(min: int, max: int) {
+    const res = []
+    for (let i = min; i <= max; i++) {
+        res.push(i)
+    }
+    return res
+}
+
+export {
+    range
+}

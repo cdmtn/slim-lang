@@ -1,11 +1,10 @@
 import { 
-    StructPassedError,
-    StructError,
-    StructExpectError,
-    StructResultError,
-    ArgumentDeclarationTypeError,
+    StructPassedError, StructError, StructExpectError, StructResultError, ArgumentDeclarationTypeError,
     EnumError
 } from "./classErrors.js"
+import {
+    SlimVariableType, SlimVariableTypes, Struct, Component, Enum, EnumValue
+} from "./types.js"
 import { formatError } from "./classErrors.js"
 
 export function __handle_async_error__(err) {
@@ -42,7 +41,7 @@ export function __handle_sync_error__(err) {
 // Console aliases
 function logProcessed(args) {
     return args.map(arg => {
-        if(arg instanceof EnumValue) {
+        if(Type.isTyped(arg) && "value" in arg) {
             return arg.value
         }
         return arg
@@ -70,7 +69,6 @@ export const debug = (...args) => {
 
 export const PI = Math.PI
 
-export class Component {}
 export class Type {
     static isStruct(obj) {
         return type(obj) == "struct"
@@ -81,20 +79,16 @@ export class Type {
     static isEnumValue(obj) {
         return obj instanceof EnumValue
     }
-}
-export class Struct {}
-export class Enum {
-    constructor(name) {
-        this.name = name;
+    static isObj(obj) {
+        return type(obj) == "object"
     }
-}
-class EnumValue {
-    constructor(value) {
-        this.value = value;
-    }
-
-    [Symbol.toPrimitive]() {
-        return this.value;
+    static isTyped(obj) {
+        if(obj instanceof SlimVariableType) {
+            return true
+        }
+        else {
+            return false
+        }
     }
 }
 export class Debug {
@@ -130,6 +124,10 @@ export function type(obj) {
         else {
             return "httpURL"
         }
+    }
+
+    if(typeof obj == "object" && obj instanceof SlimVariableType) {
+        return obj.kind
     }
 
     if(typeof obj == "object" && !Array.isArray(obj) && "type" in obj && obj.type == Struct) {
@@ -288,12 +286,36 @@ export function __def_enum__(name, schema) {
     }
 }
 
-export function __typed_default__(value, expectedType, varName) {
-    if(type(value) == expectedType) {
+export function __typed_variable__(value, expectedType, varName) {
+    const types = expectedType.split("|").map(t => t.trim())
+    const currentType = type(value)
+
+    if(expectedType === "any" || types.includes(currentType)) {
+        const typed = new SlimVariableType(value, expectedType)
+        SlimVariableTypes[varName] = typed
+
         return value
     }
     else {
-        throw new TypeError(`The variable "${varName}" is of type ${expectedType}, but was assigned a ${type(value)}`)
+        throw new TypeError(`The variable "${varName}" is of type ${expectedType}, but was assigned a ${currentType}`)
+    }
+}
+export function __typed_variable_check__(varName, value) {
+    if(varName in SlimVariableTypes) {
+        const typed = SlimVariableTypes[varName]
+        const expected = typed.expected
+        const types = expected.split("|").map(t => t.trim())
+        const currentType = type(value)
+
+        if(expected === "any" || types.includes(currentType)) {
+            return value
+        }
+        else {
+            throw new TypeError(`The variable "${varName}" is of type ${expected}, but it was redefined with type ${currentType}`)
+        }
+    }
+    else {
+        return value
     }
 }
 
@@ -468,8 +490,46 @@ export function __is_empty__(obj) {
         return false
     }
 }
+
+const IMMUTABLE = new WeakMap()
+
 export function __lock_object__(obj) {
+    if (obj === null || typeof obj !== "object") return obj
+
+    if (IMMUTABLE.has(obj)) return IMMUTABLE.get(obj)
+
+    const handler = {
+        set() {
+            throw new Error("locked object mutation")
+        },
+        deleteProperty() {
+            throw new Error("locked object mutation")
+        },
+        defineProperty() {
+            throw new Error("locked object mutation")
+        },
+        setPrototypeOf() {
+            throw new Error("locked object mutation")
+        }
+    }
+
+    const wrapped = new Proxy(obj, handler)
+
+    IMMUTABLE.set(obj, wrapped)
+
+    const keys = Reflect.ownKeys(obj)
+
+    for (const key of keys) {
+        const value = obj[key]
+
+        if (value && typeof value === "object") {
+            obj[key] = __lock_object__(value)
+        }
+    }
+
     Object.freeze(obj)
+
+    return wrapped
 }
 
 Object.assign(globalThis, {
@@ -481,7 +541,7 @@ Object.assign(globalThis, {
 
     __def_struct__, __def_enum__, __typed__, __handle_async_error__, 
     __handle_sync_error__, __sizeof__, __is_empty__, __lock_object__,
-    __typed_default__,
+    __typed_variable__, __typed_variable_check__,
 
     StructError, StructPassedError, StructExpectError, ArgumentDeclarationTypeError,
 

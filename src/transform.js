@@ -220,17 +220,38 @@ export function transform(code, sourceFile = "input.ps") {
     )
 
     const existingImports = ast.program.body.filter(n => t.isImportDeclaration(n))
-    const exports = ast.program.body.filter(n => 
-        t.isExportNamedDeclaration(n) || 
-        t.isExportDefaultDeclaration(n) || 
+
+    const exportDeclarations = ast.program.body.filter(n =>
+        t.isExportNamedDeclaration(n) ||
+        t.isExportDefaultDeclaration(n) ||
         t.isExportAllDeclaration(n)
     )
-    const rest = ast.program.body.filter(n => 
-        !t.isImportDeclaration(n) &&
-        !t.isExportNamedDeclaration(n) &&
-        !t.isExportDefaultDeclaration(n) &&
-        !t.isExportAllDeclaration(n)
-    )
+
+    const exportedNames = new Set()
+    for (const node of exportDeclarations) {
+        if (t.isExportNamedDeclaration(node) && !node.declaration && node.specifiers) {
+            for (const spec of node.specifiers) {
+                exportedNames.add(spec.local.name)
+            }
+        }
+    }
+
+    const topLevel = []
+    const rest = []
+
+    for (const node of ast.program.body) {
+        if (t.isImportDeclaration(node)) continue
+        if (t.isExportNamedDeclaration(node) || t.isExportDefaultDeclaration(node) || t.isExportAllDeclaration(node)) continue
+
+        if (
+            (t.isFunctionDeclaration(node) || t.isClassDeclaration(node)) &&
+            node.id && exportedNames.has(node.id.name)
+        ) {
+            topLevel.push(node)
+        } else {
+            rest.push(node)
+        }
+    }
 
     const tryBlock = t.tryStatement(
         t.blockStatement(rest),
@@ -252,7 +273,8 @@ export function transform(code, sourceFile = "input.ps") {
         ...wildcardNodes,
         ...importNodes,
         ...existingImports,
-        ...exports,
+        ...topLevel,
+        ...exportDeclarations,
         tryBlock
     ]
 
