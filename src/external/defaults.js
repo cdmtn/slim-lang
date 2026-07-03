@@ -115,17 +115,6 @@ export function type(obj) {
     if(obj == undefined) return "undefined"
     if(obj == NaN) return "NaN"
 
-    if(typeof obj == "string" && urlRegex.test(obj)) {
-        const url = new URL(obj)
-
-        if(url.protocol == "https:") {
-            return "httpsURL"
-        }
-        else {
-            return "httpURL"
-        }
-    }
-
     if(typeof obj == "object" && obj instanceof SlimVariableType) {
         return obj.kind
     }
@@ -141,8 +130,6 @@ export function type(obj) {
     }
 
     if(typeof obj === "function" && obj.prototype instanceof Component) return "component"
-
-    if(typeof obj == "string" && emailRegex.test(obj)) return "email"
     
     if(isArray(obj) && isTypedArray(obj, "undefined")) return "null[]"
     if(isArray(obj) && isTypedArray(obj, "string")) return "string[]"
