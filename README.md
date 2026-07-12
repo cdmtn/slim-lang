@@ -2,7 +2,7 @@
   <img width="100" height="100" alt="slimlang" src="https://github.com/user-attachments/assets/301d9a23-edff-41f2-bd2a-77e2aadd66ac" />
   <h1>Slim</h1>
 
-  <p align="left">Slim is an extension of the JavaScript language that compiles into it. 
+  <p align="left">Slim is an extension of the JavaScript language that compiles into pure JS. 
     The language adds additional features and standards that were not considered during 
     the development of JavaScript, and it also simplifies working with code by introducing 
     new functions and operators. The language aims to simplify the development of JavaScript
