@@ -44,6 +44,9 @@ function logProcessed(args) {
         if(Type.isTyped(arg) && "value" in arg) {
             return arg.value
         }
+        if(Type.isTyped(arg) && "scheme" in arg) {
+            return arg.scheme
+        }
         return arg
     })
 }
@@ -83,7 +86,7 @@ export class Type {
         return type(obj) == "object"
     }
     static isTyped(obj) {
-        if(obj instanceof SlimVariableType) {
+        if(obj instanceof SlimVariableType || obj instanceof EnumValue || obj instanceof Struct) {
             return true
         }
         else {
@@ -150,6 +153,7 @@ export function type(obj) {
 
     if(typeof obj === "boolean") return "bool"
 
+    if(typeof obj === "function" && /^\s*class\s+/.test(obj.toString())) return "class"
     if(typeof obj == "function") return "function"
 
     return undefined
@@ -214,6 +218,8 @@ export function __def_struct__(name, schema) {
     else {
         throw new StructError(`Name "${name}" is reserved`)
     }
+
+    return __structs__[name]
 }
 export function __def_enum__(name, schema) {
     const schemeArray = []
@@ -271,6 +277,8 @@ export function __def_enum__(name, schema) {
     else {
         throw new EnumError(`Name "${name}" is reserved`)
     }
+
+    return __enums__[name]
 }
 
 export function __typed_variable__(value, expectedType, varName) {

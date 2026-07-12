@@ -1,4 +1,4 @@
-import { type } from "./defaults.js";
+import { Type, type } from "./defaults.js";
 
 export const SlimVariableTypes = Object.create(null)
 

@@ -1,0 +1,80 @@
+import http from "http";
+
+class SlimServer {
+    constructor(port: int = 3000) {
+        this.port = port;
+        this.routes = {};
+        this.clients = [];
+    }
+
+    page(path: string, render: function) {
+        this.get(path, (req, res) => {
+            const isDev = process.env.SLIM_DEV === "1"
+            let html = render({ dev: isDev });
+
+            if (isDev) {
+                html += `
+                <script>
+                    (function () {
+                        let connectedBefore = false;
+
+                        const es = new EventSource("/__slim_reload__");
+
+                        es.onopen = () => {
+                            if (connectedBefore) {
+                                location.reload();
+                                return;
+                            }
+                            connectedBefore = true;
+                        };
+                    })();
+                </script>`;
+            }
+
+            res.writeHead(200, {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store"
+            });
+
+            res.end(html);
+        });
+    }
+
+    get(path: string, callback: function) {
+        this.routes[path] = callback;
+    }
+
+    start() {
+        this.get("/__slim_reload__", (req, res) => {
+            res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            });
+
+            res.write("retry: 300\n\n");
+
+            this.clients.push(res);
+
+            req.on("close", () => {
+                this.clients = this.clients.filter(x => x !== res);
+            });
+        });
+
+        http.createServer((req, res) => {
+            const route = this.routes[req.url];
+
+            if (route) {
+                route(req, res);
+                return;
+            }
+
+            res.writeHead(404);
+            res.end("404");
+        }).listen(this.port);
+
+        log(`http://localhost:${this.port}`);
+    }
+}
+
+export { SlimServer };

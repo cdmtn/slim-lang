@@ -95,7 +95,7 @@ export function preprocess(code, sourceFile = "input.ps") {
     preprocessed = replaceOperator(preprocessed, "kindof", "type")
     preprocessed = replaceOperator(preprocessed, "empty", "__is_empty__")
 
-    // Stage 1: functions/methods/arrows
+    // functions/methods/arrows
     preprocessed = runStage(preprocessed, (collect, collectCustom) => {
         // static async method
         collect(
@@ -196,7 +196,7 @@ export function preprocess(code, sourceFile = "input.ps") {
         )
     })
 
-    // Stage 2: struct/component/decl w/ type/lock
+    // struct/component/decl w/ type/lock
     const s = new MagicString(preprocessed)
 
     const replacements = []
@@ -260,9 +260,11 @@ export function preprocess(code, sourceFile = "input.ps") {
                 return `class ${name} extends Component {
   static render(variables) {
     let HTML = \`${escaped}\`
-    Object.keys(variables).forEach(v => {
-      HTML = HTML.replaceAll(new RegExp("{" + v + "}", "gm"), variables[v])
-    })
+    if(variables != undefined) {
+        Object.keys(variables).forEach(v => {
+        HTML = HTML.replaceAll(new RegExp("{" + v + "}", "gm"), variables[v])
+        })
+    }
     return HTML
   }
 }`
@@ -272,59 +274,56 @@ export function preprocess(code, sourceFile = "input.ps") {
     )
     // struct
     collect(
-        /struct\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/g,
-        (_, name, body) => {
+        /(export\s+)?struct\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/gm,
+        (_, exportKw, name, body) => {
             const fields = body
                 .split("\n")
                 .map(line => line.trim())
                 .filter(Boolean)
                 .map(line => {
+                    line = line.replace(/,\s*$/, "").trim()
                     const idx = line.indexOf(":")
                     if (idx === -1) return null
-
                     const field = line.slice(0, idx).trim()
-                    const type = line.slice(idx + 1).trim()
-
+                    const type  = line.slice(idx + 1).trim()
                     if (!field || !type) return null
-
                     return `"${field}": "${type}"`
                 })
                 .filter(Boolean)
                 .join(", ")
 
-            return `__def_struct__("${name}", { ${fields} })`
+            const decl = `const ${name} = __def_struct__("${name}", { ${fields} })`
+            return exportKw ? `export ${decl}` : decl
         }
     )
     // enum
     collect(
-        /enum\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/g,
-        (_, name, body) => {
+        /(export\s+)?enum\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/gm,
+        (_, exportKw, name, body) => {
             const fields = body
                 .split("\n")
-                .map(line => line.trim())
+                .map(line => line.replace(/,\s*$/, "").trim())
                 .filter(Boolean)
                 .map(line => {
                     const idx = line.indexOf(":")
-
                     if (idx === -1) {
                         const field = line.trim()
-                        return `"${field}": undefined`
+                        return `"${field}": "${field}"`
                     }
                     const field = line.slice(0, idx).trim()
-                    const type = line.slice(idx + 1).trim()
-
-                    if (!field || !type) return null
-
-                    return `"${field}": ${type}`
+                    const value = line.slice(idx + 1).trim()
+                    if (!field || !value) return null
+                    return `"${field}": ${value}`
                 })
                 .filter(Boolean)
                 .join(", ")
 
-            return `__def_enum__("${name}", { ${fields} })`
+            const decl = `const ${name} = __def_enum__("${name}", { ${fields} })`
+            return exportKw ? `export ${decl}` : decl
         }
     )
 
-    // capitalized types (structs) — strip annotation only, no runtime check
+    // capitalized types (structs) - strip annotation only, no runtime check
     collect(
         /\b(let|const|var)\s+([\w$]+)\s*:\s*[A-Z][\w$]*(?:<[A-Z][\w$]*>)?\s*=/g,
         (_, keyword, name) => `${keyword} ${name} =`
@@ -333,6 +332,8 @@ export function preprocess(code, sourceFile = "input.ps") {
     // decl w/ type
     collectCustom(
         (src, i) => {
+            if (isInsideString(src, i)) return null;
+            
             const re = /\b(let|const|var|static)\s+(#?[\w$]+)\s*:\s*([\w$[\]]+(?:<[\w$]+>)?(?:\s*\|\s*[\w$[\]]+(?:<[\w$]+>)?)*)\s*=/y
             re.lastIndex = i
             const m = re.exec(src)
@@ -347,6 +348,8 @@ export function preprocess(code, sourceFile = "input.ps") {
     // reassign typed
     collectCustom(
         (src, i) => {
+            if (isInsideString(src, i)) return null;
+
             const re = /\b([\w$]+)\s*=/y
             re.lastIndex = i
             const m = re.exec(src)
@@ -426,6 +429,12 @@ export function preprocess(code, sourceFile = "input.ps") {
             return { start: i, end: afterKeyword + expr.length, expr }
         },
         ({ expr }) => `__lock_object__(${expr})`
+    )
+
+    // elif
+    collect(
+        /\}\s*elif\s*\(/g,
+        match => match.replace("elif", "else if")
     )
 
     replacements.sort((a, b) => a.start - b.start)
@@ -687,4 +696,27 @@ function buildTypedArgsResult(parsedArgs, fnName) {
         .join("\n    ")
 
     return { signature, checks }
+}
+
+function isInsideString(src, index) {
+    let quote = null;
+
+    for (let i = 0; i < index; i++) {
+        const c = src[i];
+
+        if (c === "\\" && quote) {
+            i++;
+            continue;
+        }
+
+        if (!quote) {
+            if (c === '"' || c === "'" || c === "`") {
+                quote = c;
+            }
+        } else if (c === quote) {
+            quote = null;
+        }
+    }
+
+    return quote !== null;
 }

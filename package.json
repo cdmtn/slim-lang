@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "slim:build": "node src/compile.js",
-    "slim": "node src/compile.js && node run-slim.js"
+    "slim": "node src/compile.js && node run-slim.js",
+    "slim:server": "node run-dev-slim.js"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +17,7 @@
     "@babel/parser": "^7.29.7",
     "@babel/traverse": "^7.29.7",
     "@babel/types": "^7.29.7",
+    "chokidar": "^5.0.0",
     "magic-string": "^0.30.21",
     "source-map": "^0.7.6"
   },

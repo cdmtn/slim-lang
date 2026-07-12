@@ -1,0 +1,98 @@
+export func int(value: string) {
+    if (type(value) == "int") return value
+
+    const result = Number(value)
+
+    if (!Number.isInteger(result)) {
+        throw new TypeError(`Cannot convert "${value}" to int`)
+    }
+
+    return result
+}
+
+export func float(value: string | float | int) {
+    if (type(value) == "float") return value
+
+    const result = Number(value)
+
+    if (Number.isNaN(result)) {
+        throw new TypeError(`Cannot convert "${value}" to float`)
+    }
+
+    return result
+}
+
+export func number(value: string | float) {
+    if (typeof value == "number") return value
+
+    const result = Number(value)
+
+    if (Number.isNaN(result)) {
+        throw new TypeError(`Cannot convert "${value}" to number`)
+    }
+
+    return result
+}
+
+export func string(value: any) {
+    return String(value)
+}
+
+export func bool(value: int | float | string) {
+    if (typeof value == "boolean") return value
+
+    if (typeof value == "number") {
+        return value != 0
+    }
+
+    if (typeof value == "string") {
+        const str = value.trim().toLowerCase()
+
+        if (str == "true" || str == "1") return true
+        if (str == "false" || str == "0") return false
+    }
+
+    return Boolean(value)
+}
+
+export func bigint(value: int | float) {
+    try {
+        return BigInt(value)
+    }
+    catch {
+        throw new TypeError(`Cannot convert "${value}" to bigint`)
+    }
+}
+
+export func symbol(value: any) {
+    return Symbol(String(value))
+}
+
+export func array(value: any) {
+    if (Array.isArray(value)) return value
+
+    return [value]
+}
+
+export func date(value: int | float) {
+    const result = new Date(value)
+
+    if (Number.isNaN(result.getTime())) {
+        throw new TypeError(`Cannot convert "${value}" to date`)
+    }
+
+    return result
+}
+
+export func json(value: any) {
+    if (typeof value == "string") {
+        try {
+            return JSON.parse(value)
+        }
+        catch {
+            throw new TypeError("Invalid JSON")
+        }
+    }
+
+    return JSON.parse(JSON.stringify(value))
+}
