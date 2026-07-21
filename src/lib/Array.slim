@@ -1,6 +1,6 @@
 const oldSort = Array.prototype.sort;
 
-Array.prototype.sort = (compareFn) => {
+Array.prototype.sort = function (compareFn) {
     if (compareFn) return oldSort.call(this, compareFn);
 
     if (this.every(v => typeof v === "number")) {
