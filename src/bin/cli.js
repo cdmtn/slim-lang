@@ -13,13 +13,16 @@ import pkg from "../../package.json" with { type: "json" };
 const root = process.cwd()
 const program = new Command();
 const slimConfigPath = path.join(root, "slimconfig.json")
+const packagePath = path.join(root, "package.json")
 const spaceRegex = /\s/gm
 
 function slimConfigCheck() {
+    packageCheck()
+
     if (!fs.existsSync(slimConfigPath)) {
         error(`The configuration file does not exist, or it is not in the root directory. You can create the configuration file:
     ${program.name()} create --config`)
-        return
+        return false
     }
 }
 function slimConfigRead() {
@@ -27,10 +30,16 @@ function slimConfigRead() {
 
     return JSON.parse(fs.readFileSync(slimConfigPath, "utf8"));
 }
+function packageCheck() {
+    if (!fs.existsSync(packagePath)) {
+        error(`package.json was not found in the root folder of the directory`)
+        return false
+    }
+}
 
 program
     .name("slmc")
-    .description(`Slim Language Compiler (${pkg.version})`)
+    .description(`Slim Language CLI (SLMC ${pkg.version})`)
     .version(pkg.version);
 
 program
@@ -212,6 +221,45 @@ program
 `Please use the following arguments to create files: 
     ${program.name()} help create
 `)
+        }
+    });
+
+program
+    .command("version")
+    .option("--check", "Check actual version")
+    .action(async (params) => {
+        packageCheck()
+
+        if(params.check) {
+            const githubRepo = pkg.repository.url.split("git+https://github.com/")[1].trim().split(".git")[0]
+            const res = await fetch("https://raw.githubusercontent.com/" + githubRepo + "/main/package.json")
+            const githubPkg = await res.json()
+
+            if(githubPkg.version != pkg.version) {
+                log(`Your version is not compatible with the latest version of Slim:
+    Current: ${githubPkg.version}
+    Your's: ${pkg.version}`)
+            }
+            else {
+                log(`You on the latest Slim version`)
+            }
+            return
+        }
+        console.log(program.version())
+    });
+
+program
+    .command("log")
+    .argument('<string>')
+    .action((str) => {
+        log(str)
+    });
+
+program
+    .command("check")
+    .action(() => {
+        if(slimConfigCheck() != false) {
+            log("Everything is OK")
         }
     });
 

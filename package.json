@@ -4,6 +4,10 @@
   "description": "",
   "main": "index.js",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cdmtn-dev/Slim-Language.git"
+  },
   "scripts": {
     "slim:build": "node src/compile.js",
     "slim": "node src/compile.js && node run-slim.js",
