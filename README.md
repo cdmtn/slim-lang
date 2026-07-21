@@ -23,7 +23,7 @@ Requirements:
 - Git
 
 Installation
-```
+```console
 git clone https://github.com/cdmtn-dev/Slim-Language.git
 slmc --version
 ```
@@ -32,13 +32,13 @@ During installation, you’ll need to create a folder to hold your Slim project.
 
 - Create Slim config:
   
-  ```
+  ```console
   slmc create --config
   slmc config -S main=index
   ```
 - Create `.slim` file:
   
-  ```
+  ```console
   slmc create --file index
   slmc run
   ```
