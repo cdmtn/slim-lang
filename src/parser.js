@@ -94,6 +94,8 @@ export function preprocess(code, sourceFile = "input.ps") {
     preprocessed = replaceOperator(preprocessed, "sizeof", "__sizeof__")
     preprocessed = replaceOperator(preprocessed, "kindof", "type")
     preprocessed = replaceOperator(preprocessed, "empty", "__is_empty__")
+    preprocessed = replaceOperator(preprocessed, "copyof", "__copyof__")
+    preprocessed = replaceBinaryOperator(preprocessed, "~/", "__intdiv__")
 
     // functions/methods/arrows
     preprocessed = runStage(preprocessed, (collect, collectCustom) => {
@@ -719,4 +721,95 @@ function isInsideString(src, index) {
     }
 
     return quote !== null;
+}
+
+function extractExprBackward(str, endPosExclusive) {
+    let i = endPosExclusive
+    while (i > 0 && /\s/.test(str[i - 1])) i--
+    const contentEnd = i
+
+    let depth = 0
+
+    while (i > 0) {
+        const ch = str[i - 1]
+
+        if (ch === '"' || ch === "'" || ch === "`") break
+
+        if (ch === ")" || ch === "]" || ch === "}") { depth++; i--; continue }
+        if (ch === "(" || ch === "[" || ch === "{") {
+            if (depth === 0) break
+            depth--; i--; continue
+        }
+
+        if (depth === 0) {
+            const two = str.slice(Math.max(0, i - 2), i)
+            if (["==", "!=", ">=", "<=", "&&", "||", "??", "=>"].includes(two)) break
+            if (["+", "-", "*", "/", "%", "<", ">", "=", "?", ":", ";", ",", "\n"].includes(ch)) break
+        }
+
+        i--
+    }
+
+    let start = i
+    while (start < contentEnd && /\s/.test(str[start])) start++
+
+    return { expr: str.slice(start, contentEnd).trim(), start }
+}
+
+function extractExprForward(str, startPos) {
+    let depth = 0
+    let i = startPos
+
+    while (i < str.length) {
+        const ch = str[i]
+
+        if (ch === '"' || ch === "'" || ch === "`") {
+            const quote = ch
+            i++
+            while (i < str.length) {
+                if (str[i] === "\\") { i += 2; continue }
+                if (str[i] === quote) { i++; break }
+                i++
+            }
+            continue
+        }
+
+        if (ch === "(" || ch === "[" || ch === "{") { depth++; i++; continue }
+        if (ch === ")" || ch === "]" || ch === "}") {
+            if (depth === 0) break
+            depth--; i++; continue
+        }
+
+        if (depth === 0) {
+            const two = str.slice(i, i + 2)
+            if (["==", "!=", ">=", "<=", "&&", "||", "??"].includes(two)) break
+            if (["+", "-", "*", "/", "%", "<", ">", "?", ":", ";", ",", "\n"].includes(ch)) break
+        }
+
+        i++
+    }
+
+    return { expr: str.slice(startPos, i).trim(), end: i }
+}
+
+function replaceBinaryOperator(code, token, fn) {
+    let result = code
+    let searchFrom = result.length
+
+    while (searchFrom >= 0) {
+        const idx = result.lastIndexOf(token, searchFrom)
+        if (idx === -1) break
+        searchFrom = idx - 1
+
+        if (isInsideString(result, idx)) continue
+
+        const { expr: left, start: leftStart } = extractExprBackward(result, idx)
+        const { expr: right, end: rightEnd } = extractExprForward(result, idx + token.length)
+
+        if (!left || !right) continue
+
+        result = result.slice(0, leftStart) + `${fn}(${left}, ${right})` + result.slice(rightEnd)
+    }
+
+    return result
 }

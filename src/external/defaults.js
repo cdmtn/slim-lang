@@ -93,6 +93,14 @@ export class Type {
             return false
         }
     }
+    static isObj(obj) {
+        return type(obj) == "object"
+    }
+    static isAnyArray(obj) {
+        if(type(obj) == "array") return true
+        else if(type(obj).endsWith("[]")) return true
+        else return false
+    }
 }
 export class Debug {
     static log(...args) {
@@ -486,6 +494,24 @@ export function __is_empty__(obj) {
     }
 }
 
+export function __copyof__(obj) {
+    if(Type.isObj(obj)) {
+        return {...obj}
+    }
+    else if(Type.isAnyArray(obj)) {
+        const arrCopy = []
+        obj.forEach(item => arrCopy.push(item))
+        return arrCopy
+    }
+    else {
+        throw TypeError(`Copy target must be object or array, not ${type(obj)}`)
+    }
+}
+
+export function __intdiv__(a, b) {
+    return Math.trunc(a / b)
+}
+
 const IMMUTABLE = new WeakMap()
 
 export function __lock_object__(obj) {
@@ -536,7 +562,7 @@ Object.assign(globalThis, {
 
     __def_struct__, __def_enum__, __typed__, __handle_async_error__, 
     __handle_sync_error__, __sizeof__, __is_empty__, __lock_object__,
-    __typed_variable__, __typed_variable_check__,
+    __typed_variable__, __typed_variable_check__, __intdiv__, __copyof__,
 
     StructError, StructPassedError, StructExpectError, ArgumentDeclarationTypeError,
 
