@@ -19,7 +19,7 @@ Anywhere JavaScript and APIs are used. It can support both simple and complex ar
 ## How To Install?
 
 Requirements:
-- Node.js 14+
+- Node.js 22+
 - Git
 
 Installation
