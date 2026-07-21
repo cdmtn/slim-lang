@@ -25,20 +25,25 @@ Requirements:
 Installation
 ```
 git clone https://github.com/cdmtn-dev/Slim-Language.git
-npm run slim
+slmc --version
 ```
 
-During installation, you’ll need to create a folder to hold your Slim project. Once you’ve created it, create two files:
+During installation, you’ll need to create a folder to hold your Slim project. Once you’ve created it, run some commands:
 
-- slimconfig.json
-- index.slim
+- Create Slim config:
+  
+  ```
+  slmc create --config
+  slmc config -S main=index
+  ```
+- Create `.slim` file:
+  
+  ```
+  slmc create --file index
+  slmc run
+  ```
 
-slimconfig.json
-```json
-{
-    "main": "index"
-}
-```
+You created slimconfig.json and added a `main` key with the value `index`. When you run `slmc run`, you compile and run index.slim
 
 ## Examples
 
