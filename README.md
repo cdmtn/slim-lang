@@ -24,7 +24,7 @@ Requirements:
 
 Installation
 ```console
-git clone https://github.com/cdmtn-dev/Slim-Language.git
+git clone https://github.com/cdmtn/slim-lang.git
 slmc --version
 ```
 
