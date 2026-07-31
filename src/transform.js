@@ -4,62 +4,18 @@ import _generate from "@babel/generator"
 import { preprocess } from "./parser.js"
 import * as t from "@babel/types"
 import { SourceMapConsumer } from "source-map"
-import path from "path"
+import path from "node:path"
+import { getDistPath, resolveSlimImport } from "./modulePaths.js"
 
 const traverse = _traverse.default ?? _traverse
 const generate = _generate.default ?? _generate
 
 function resolvePath(raw, fromFile) {
-    const fromDir = path.dirname(fromFile)
-    const projectRoot = path.resolve(".")
-    const srcRoot = path.resolve("src")
-    const absFrom = path.resolve(fromFile)
-
-    function getDistFile(slimAbs) {
-        if (slimAbs.startsWith(srcRoot)) {
-            const rel = path.relative(srcRoot, slimAbs)
-            return path.resolve("dist", rel.replace(/\.slim$/, ".js"))
-        }
-        const rel = path.relative(projectRoot, slimAbs)
-        return path.resolve("dist", rel.replace(/\.slim$/, ".js"))
-    }
-
-    function toRelative(from, to) {
-        const rel = path.relative(path.dirname(from), to).replace(/\\/g, "/")
-        return rel.startsWith(".") ? rel : "./" + rel
-    }
-
-    if (raw.startsWith("@slim/")) {
-        const rel = raw.replace("@slim/", "")
-        const distTarget = path.resolve("dist/lib", rel + ".js")
-        const distFrom = getDistFile(absFrom)
-        return toRelative(distFrom, distTarget)
-    }
-
-    if (raw.endsWith(".js")) {
-        return raw
-    }
-
-    const slimAbs = path.resolve(fromDir, raw + ".slim")
-    const distTarget = getDistFile(slimAbs)
-    const distFrom = getDistFile(absFrom)
-    return toRelative(distFrom, distTarget)
+    return resolveSlimImport(raw, fromFile)
 }
 
 function getDefaultsPath(sourceFile) {
-    const projectRoot = path.resolve(".")
-    const srcRoot = path.resolve("src")
-    const abs = path.resolve(sourceFile)
-
-    let distFile
-    if (abs.startsWith(srcRoot)) {
-        const rel = path.relative(srcRoot, abs)
-        distFile = path.resolve("dist", rel.replace(/\.slim$/, ".js"))
-    } else {
-        const rel = path.relative(projectRoot, abs)
-        distFile = path.resolve("dist", rel.replace(/\.slim$/, ".js"))
-    }
-
+    const distFile = getDistPath(sourceFile)
     const defaultsAbs = path.resolve("dist/external/defaults.js")
     const rel = path.relative(path.dirname(distFile), defaultsAbs)
     const relFixed = rel.replace(/\\/g, "/")
@@ -201,6 +157,7 @@ export function transform(code, sourceFile = "input.ps") {
 
     const wildcardNodes = wildcards.flatMap((source) => {
         const alias = "__" + source.replace(/[^a-zA-Z0-9]/g, "_").replace(/^_+|_+$/g, "") + "__"
+
         return [
             t.importDeclaration(
                 [t.importNamespaceSpecifier(t.identifier(alias))],

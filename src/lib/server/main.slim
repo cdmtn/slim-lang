@@ -1,6 +1,6 @@
 import http from "http";
 
-class SlimServer {
+class Server {
     constructor(port: int = 3000) {
         this.port = port;
         this.routes = {};
@@ -77,4 +77,6 @@ class SlimServer {
     }
 }
 
-export { SlimServer };
+type Server = Server;
+
+export { Server };

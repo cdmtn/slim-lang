@@ -165,3 +165,7 @@ export class ArgumentDeclarationTypeError extends TypeError_ {
 export class EnumError extends LangError {
     constructor(m, meta) { super(m, "EnumError", meta) }
 }
+
+export class UseError extends Error {
+    constructor(m, meta) { super(m, "UseError", meta) }
+}

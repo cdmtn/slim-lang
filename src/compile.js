@@ -6,6 +6,8 @@ import { transform } from "./transform.js"
 import { readFile } from 'fs/promises';
 import { Debug } from "./external/defaults.js";
 import { stripComments } from "./parser.js";
+import { UseError } from "./external/classErrors.js";
+import { getDistPath, resolveSlimSource } from "./modulePaths.js";
 
 const compiled = new Set()
 
@@ -39,35 +41,6 @@ function syncExternal() {
     }
 
     syncDir(srcExternal, distExternal)
-}
-
-function resolveSlimPath(raw, fromFile) {
-    if (raw.startsWith("@slim/")) {
-        const rel = raw.replace("@slim/", "")
-        return path.resolve("src/lib", rel + ".slim")
-    }
-
-    if (raw.endsWith(".js")) {
-        const fromDir = path.dirname(fromFile)
-        return path.resolve(fromDir, raw)
-    }
-
-    const fromDir = path.dirname(fromFile)
-    return path.resolve(fromDir, raw + ".slim")
-}
-
-function getDistPath(slimFile) {
-    const abs = path.resolve(slimFile)
-    const srcRoot = path.resolve("src")
-    const projectRoot = path.resolve(".")
-
-    if (abs.startsWith(srcRoot)) {
-        const rel = path.relative(srcRoot, abs)
-        return path.resolve("dist", rel.replace(/\.slim$/, ".js"))
-    }
-
-    const rel = path.relative(projectRoot, abs)
-    return path.resolve("dist", rel.replace(/\.slim$/, ".js"))
 }
 
 function extractUses(code) {
@@ -113,8 +86,16 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
 
     const uses = extractUses(code)
     for (const raw of uses) {
-        const depPath = resolveSlimPath(raw, abs)
-        if (depPath.endsWith(".js")) continue
+        const depPath = resolveSlimSource(raw, abs)
+
+        if (depPath === null) continue
+
+        if (!fs.existsSync(depPath)) {
+            const err = new UseError(`No lib/file founded by the path: ${raw}`)
+            console.error(err)
+            process.exit(1)
+        }
+
         if (depPath === abs) {
             console.error(`\nError: Circular dependency detected in ${abs}\n`)
             process.exit(1)

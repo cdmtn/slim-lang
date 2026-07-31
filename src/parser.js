@@ -99,6 +99,13 @@ export function preprocess(code, sourceFile = "input.ps") {
 
     // functions/methods/arrows
     preprocessed = runStage(preprocessed, (collect, collectCustom) => {
+        // type def
+        collect(
+            /^type\s+(_|[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(.*)$/gm,
+            (_, name) => {
+                return ''
+            }
+        )
         // static async method
         collect(
             /\bstatic\s+async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/g,
