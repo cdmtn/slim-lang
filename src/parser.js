@@ -439,6 +439,19 @@ export function preprocess(code, sourceFile = "input.ps") {
         match => match.replace("elif", "else if")
     )
 
+    // mode "..."
+    collect(
+        /mode\s+"([^"]+)"/,
+        (_, name) => {
+            if(name == "strict") {
+                return `"use strict"`
+            }
+            else {
+                return ''
+            }
+        }
+    )
+
     replacements.sort((a, b) => a.start - b.start)
 
     const filtered = []

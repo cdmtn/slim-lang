@@ -1,6 +1,7 @@
 slimconfig.json
 struct.slim
-input.slim
+test.slim
 dist/
 node_modules
 local/
+todo.md

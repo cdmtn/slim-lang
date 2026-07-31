@@ -43,25 +43,25 @@ program
     .version(pkg.version);
 
 program
-    .command("compile")
-    .description("Compile a Slim project")
-    .option("-S, --silent", "Compile without log")
+    .command("build")
+    .description("Build a Slim project")
+    .option("-S, --silent", "Build without log")
     .action((params) => {
         slimConfigCheck()
 
-        if(!params.silent) log("Compiling...")
+        if(!params.silent) log("Building...")
         execSync("node src/compile.js", { stdio: "inherit" });
         if(!params.silent) log("Ready!")
     });
 
 program
     .command("run")
-    .description("Compile and run a Slim project")
-    .option("-S, --silent", "Compile without log")
+    .description("Build and run a Slim project")
+    .option("-S, --silent", "Run without log")
     .action((params) => {
         slimConfigCheck()
 
-        if(!params.silent) log("Compiling and running...")
+        if(!params.silent) log("Building and running...")
         execSync("node src/compile.js && node run-slim.js", { stdio: "inherit" });
     });
 
