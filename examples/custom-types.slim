@@ -1,0 +1,7 @@
+type number(v) {
+    return kindof v == "int" || kindof v == "float"
+}
+
+let n: number = 1 // ok
+let n2: number = 1.5 // ok
+let n3: number = "" // expected number, got string
