@@ -29,3 +29,10 @@ export class EnumValue {
         this.value = value;
     }
 }
+
+export function isSameType(a, b) {
+    if (typeof a === "function" && typeof b === "object") return b instanceof a
+    if (typeof b === "function" && typeof a === "object") return a instanceof b
+
+    return a === b;
+}

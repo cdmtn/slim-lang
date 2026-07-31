@@ -3,9 +3,31 @@ import {
     EnumError
 } from "./classErrors.js"
 import {
-    SlimVariableType, SlimVariableTypes, Struct, Component, Enum, EnumValue
+    SlimVariableType, SlimVariableTypes, Struct, Component, Enum, EnumValue,
+    isSameType
 } from "./types.js"
 import { formatError } from "./classErrors.js"
+
+const __structs__ = {}
+const __enums__ = {}
+const __RESERVED_DEFINES__ = new Set([
+    "Error", "Object", "Array", "String", "Number",
+    "Boolean", "Function", "Symbol", "Map", "Set",
+    "Promise", "Proxy", "Reflect", "Math", "JSON",
+    "Date", "RegExp", "WeakMap", "WeakSet", "WeakRef",
+    "ArrayBuffer", "DataView", "Iterator",
+    "Int8Array", "Uint8Array", "Uint8ClampedArray",
+    "Int16Array", "Uint16Array", "Int32Array",
+    "Uint32Array", "Float32Array", "Float64Array",
+    "undefined", "null", "NaN", "Infinity",
+    "globalThis", "global", "process", "console",
+    "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+    "queueMicrotask", "structuredClone",
+    "eval", "isNaN", "isFinite", "parseFloat", "parseInt",
+    "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
+    "type", "schemeArray", "verify", "values", "verifySafe"
+])
+const __custom_types__ = {}
 
 export function __handle_async_error__(err) {
     if (err?.tag) {
@@ -101,6 +123,12 @@ export class Type {
         else if(type(obj).endsWith("[]")) return true
         else return false
     }
+
+    static isRegistredCustom(type) {
+        return Object.keys(__custom_types__).includes(type)
+    }
+
+    static Customs = __custom_types__
 }
 export class Debug {
     static log(...args) {
@@ -108,7 +136,7 @@ export class Debug {
     }
 }
 
-export function type(obj) {
+export function type(obj, properties = {}) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     const urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/
 
@@ -168,26 +196,6 @@ export function type(obj) {
 }
 
 // structures
-
-const __structs__ = {}
-const __enums__ = {}
-const __RESERVED_DEFINES__ = new Set([
-    "Error", "Object", "Array", "String", "Number",
-    "Boolean", "Function", "Symbol", "Map", "Set",
-    "Promise", "Proxy", "Reflect", "Math", "JSON",
-    "Date", "RegExp", "WeakMap", "WeakSet", "WeakRef",
-    "ArrayBuffer", "DataView", "Iterator",
-    "Int8Array", "Uint8Array", "Uint8ClampedArray",
-    "Int16Array", "Uint16Array", "Int32Array",
-    "Uint32Array", "Float32Array", "Float64Array",
-    "undefined", "null", "NaN", "Infinity",
-    "globalThis", "global", "process", "console",
-    "setTimeout", "setInterval", "clearTimeout", "clearInterval",
-    "queueMicrotask", "structuredClone",
-    "eval", "isNaN", "isFinite", "parseFloat", "parseInt",
-    "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
-    "type", "schemeArray", "verify", "values", "verifySafe"
-])
 
 export function __def_struct__(name, schema) {
     const schemeArray = {}
@@ -289,9 +297,15 @@ export function __def_enum__(name, schema) {
     return __enums__[name]
 }
 
-export function __typed_variable__(value, expectedType, varName) {
+export function __typed_variable__(value, expectedType, varName, properties = {}) {
+    const silent = "silent" in properties ? properties.silent : false
+
     const types = expectedType.split("|").map(t => t.trim())
     const currentType = type(value)
+
+    function err() {
+        throw new TypeError(`The "${varName}" is of type ${expectedType}, but was assigned a ${currentType}`)
+    }
 
     if(expectedType === "any" || types.includes(currentType)) {
         const typed = new SlimVariableType(value, expectedType)
@@ -299,8 +313,30 @@ export function __typed_variable__(value, expectedType, varName) {
 
         return value
     }
+    else if(expectedType in __custom_types__) {
+        const customType = __custom_types__[expectedType]
+        
+        if(typeof customType == "object" && "value" in customType) {
+            const v = customType.value
+
+            if(isSameType(v, value)) {
+                return value
+            }
+            else {
+                if(!silent) err()
+                return false
+            }
+        }
+        else if(typeof customType == "function" && customType(value) != true) {
+            if(!silent) err()
+            return false
+        }
+
+        return value
+    }
     else {
-        throw new TypeError(`The variable "${varName}" is of type ${expectedType}, but was assigned a ${currentType}`)
+        if(!silent) err()
+        return false
     }
 }
 export function __typed_variable_check__(varName, value) {
@@ -319,6 +355,43 @@ export function __typed_variable_check__(varName, value) {
     }
     else {
         return value
+    }
+}
+
+export function __argument_typed__(value, expectedType, varName) {
+    return _verify_with_custom_type_(expectedType, value)
+}
+
+export function __type_def__(name, value, properties = {}) {
+    const type = "type" in properties ? properties.type : false
+
+    if(type == "one-line-expr") {
+        value = {
+            type: type,
+            value: value
+        }
+    }
+
+    __custom_types__[name] = value
+    return value
+}
+
+function _verify_with_custom_type_(type, value) {
+    if(type in __custom_types__) {
+        const customType = __custom_types__[type]
+
+        if(typeof customType == "function") {
+            return customType(value) == true
+        }
+        else if(typeof customType == "object" && "value" in customType) {
+            return isSameType(customType.value, value)
+        }
+    }
+    else if(type == "any") {
+        return true
+    }
+    else {
+        return type(value) == type
     }
 }
 
@@ -362,7 +435,7 @@ export function __typed__(value, structName, returnMethod = "default") {
             return true
         }
 
-        return expectedType == "any" || type(val) == expectedType
+        return expectedType == "any" || _verify_with_custom_type_(expectedType, val)
     }
 
     const structDef = __structs__[structName]
@@ -436,7 +509,7 @@ export function __typed__(value, structName, returnMethod = "default") {
             }
         }
         else if (!checkType(expectedType, val)) {
-            throwError({ field: field, expectedType: expectedType, val: val })
+            return throwError({ field: field, expectedType: expectedType, val: val })
         }
 
         function throwError({ field, expectedType, val }) {
@@ -563,6 +636,7 @@ Object.assign(globalThis, {
     __def_struct__, __def_enum__, __typed__, __handle_async_error__, 
     __handle_sync_error__, __sizeof__, __is_empty__, __lock_object__,
     __typed_variable__, __typed_variable_check__, __intdiv__, __copyof__,
+    __type_def__, __argument_typed__,
 
     StructError, StructPassedError, StructExpectError, ArgumentDeclarationTypeError,
 

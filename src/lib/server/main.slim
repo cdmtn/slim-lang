@@ -1,5 +1,7 @@
 import http from "http";
 
+type ServerInstance = typeof Server;
+
 class Server {
     constructor(port: int = 3000) {
         this.port = port;
@@ -76,7 +78,5 @@ class Server {
         log(`http://localhost:${this.port}`);
     }
 }
-
-type Server = Server;
 
 export { Server };

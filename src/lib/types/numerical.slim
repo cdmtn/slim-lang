@@ -1,0 +1,12 @@
+type number(v) {
+    return kindof v == "int" || kindof v == "float"
+}
+type nonZero(v) {
+    return number(v) && v != 0
+}
+type even(v) {
+    return kindof v == "int" && v % 2 == 0
+}
+type odd(v) {
+    return kindof v == "int" && v % 2 != 0
+}
