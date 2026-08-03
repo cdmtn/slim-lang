@@ -9,8 +9,10 @@ import {
     replaceBinaryOperator,
     replaceOperator,
     parseTypes,
-    buildTypedArgsResult
+    buildTypedArgsResult,
+    replaceCondOperator
 } from "./handlers/parserHandler.js"
+import { parseComponents } from "./handlers/parser/components.js"
 
 export function stripComments(code) {
     let result = ""
@@ -101,24 +103,22 @@ function runStage(text, register) {
     return s.toString()
 }
 
-export function preprocess(code, sourceFile = "input.ps") {
+export function preprocess(code, sourceFile = "index.slim") {
     let preprocessed = stripComments(code)
+    preprocessed = replaceCondOperator(preprocessed, "or", "||")
+
+    preprocessed = parseTypes(preprocessed)
+
     preprocessed = replaceOperator(preprocessed, "sizeof", "__sizeof__")
     preprocessed = replaceOperator(preprocessed, "kindof", "type")
     preprocessed = replaceOperator(preprocessed, "empty", "__is_empty__")
     preprocessed = replaceOperator(preprocessed, "copyof", "__copyof__")
     preprocessed = replaceBinaryOperator(preprocessed, "~/", "__intdiv__")
-    preprocessed = parseTypes(preprocessed)
+
+    preprocessed = parseComponents(preprocessed)
 
     // functions/methods/arrows
     preprocessed = runStage(preprocessed, (collect, collectCustom) => {
-        // type def
-        collect(
-            /^type\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\{([\s\S]*?)^\}/gm,
-            (_, typeName, typeValue) => {
-                return ``
-            }
-        )
         // static async method
         collect(
             /\bstatic\s+async\s+(#?[\w$]+)\s*\(([^)]*)\)\s*\{/g,
@@ -216,6 +216,18 @@ export function preprocess(code, sourceFile = "input.ps") {
                 return `function ${name}(${signature}) {\n    ${checks}`
             }
         )
+
+        // JavaScript-compatible function declarations
+        collect(
+            /\b(async\s+)?function\s+([\w$]+)\s*\(([^)]*)\)\s*\{/g,
+            (_, asyncKw, name, args) => {
+                const parsed = parseTypedArgs(args)
+                const { signature, checks } = buildTypedArgsResult(parsed, name)
+                const prefix = asyncKw ?? ""
+                if (!checks) return `${prefix}function ${name}(${signature}) {`
+                return `${prefix}function ${name}(${signature}) {\n    ${checks}`
+            }
+        )
     })
 
     // struct/component/decl w/ type/lock
@@ -272,28 +284,6 @@ export function preprocess(code, sourceFile = "input.ps") {
         (_, source) => `__use_all__(${JSON.stringify(source)})\n`
     )
 
-    // component
-    collect(
-        /component\s+([a-zA-Z_$][\w$]*)\s*\{([\s\S]*?)\n\}/g,
-        (_, name, body) => {
-            const jsxMatch = body.match(/^\s*(<[\s\S]+>[\s\S]*<\/[\s\S]+>|<[^>]+\/>)\s*$/)
-            if (jsxMatch) {
-                const escaped = jsxMatch[1].trim().replace(/`/g, "\\`")
-                return `class ${name} extends Component {
-  static render(variables) {
-    let HTML = \`${escaped}\`
-    if(variables != undefined) {
-        Object.keys(variables).forEach(v => {
-        HTML = HTML.replaceAll(new RegExp("{" + v + "}", "gm"), variables[v])
-        })
-    }
-    return HTML
-  }
-}`
-            }
-            return `class ${name} {${body}\n}`
-        }
-    )
     // struct
     collect(
         /(export\s+)?struct\s+([A-Z][\w$]*)\s*\{([\s\S]*?)\}/gm,
@@ -350,7 +340,7 @@ export function preprocess(code, sourceFile = "input.ps") {
         (src, i) => {
             if (isInsideString(src, i)) return null;
             
-            const re = /\b(let|const|var|static)\s+(#?[\w$]+)\s*:\s*([\w$[\]]+(?:<[\w$]+>)?(?:\s*\|\s*[\w$[\]]+(?:<[\w$]+>)?)*)\s*=/y
+            const re = /\b(let|const|var|static)\s+(#?[\w$]+)\s*:\s*([\w$]+(?:::[\w$]+)?(?:<[^<>]+>)?(?:\[\])?(?:\s*\|\s*[\w$]+(?:::[\w$]+)?(?:<[^<>]+>)?(?:\[\])?)*)\s*=/y
             re.lastIndex = i
             const m = re.exec(src)
             if (!m) return null
@@ -359,45 +349,6 @@ export function preprocess(code, sourceFile = "input.ps") {
         },
         ({ keyword, name, type, expr }) =>
             `${keyword} ${name} = __typed_variable__(${expr}, "${type}", "${name}")`
-    )
-
-    // reassign typed
-    collectCustom(
-        (src, i) => {
-            if (isInsideString(src, i)) return null;
-
-            const re = /\b([\w$]+)\s*=/y
-            re.lastIndex = i
-            const m = re.exec(src)
-            if (!m) return null
-            if ('=+-*/%&|^<>!'.includes(src[m.index + m[0].length])) return null
-
-            let j = i - 1
-            while (j >= 0 && /\s/.test(src[j])) j--
-            if (src[j] === ':') return null
-
-            if (/\b(let|const|var)\s*$/.test(src.slice(Math.max(0, i - 8), i))) return null
-
-            {
-                let depth = 0
-                let k = i - 1
-                while (k >= 0) {
-                    const c = src[k]
-                    if (c === ';' || c === '{' || c === '}') break
-                    if (c === ')') depth++
-                    else if (c === '(') {
-                        if (depth === 0) return null
-                        depth--
-                    }
-                    k--
-                }
-            }
-
-            const { expr, end } = extractExprRaw(src, i + m[0].length)
-            return { start: i, end, name: m[1], expr }
-        },
-        ({ name, expr }) =>
-            `${name} = __typed_variable_check__("${name}", ${expr})`
     )
 
     // pipes

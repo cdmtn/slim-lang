@@ -263,4 +263,10 @@ program
         }
     });
 
-program.parse();
+
+try {
+    program.parse();
+}
+catch (err) {
+    //
+}

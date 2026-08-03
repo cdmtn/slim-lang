@@ -1,12 +1,12 @@
-type number(v) {
-    return kindof v == "int" || kindof v == "float"
+export type number(v) {
+    return kindof v == "int" or kindof v == "float"
 }
-type nonZero(v) {
+export type nonZero(v) {
     return number(v) && v != 0
 }
-type even(v) {
+export type even(v) {
     return kindof v == "int" && v % 2 == 0
 }
-type odd(v) {
+export type odd(v) {
     return kindof v == "int" && v % 2 != 0
 }

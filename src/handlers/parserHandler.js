@@ -1,3 +1,5 @@
+import { TypeDefError } from "../external/classErrors.js"
+
 function extractExpr(str, startPos) {
     let depth = 0
     let i = startPos
@@ -167,7 +169,7 @@ function parseTypedArgs(argsStr) {
     if (current.trim()) args.push(current.trim())
 
     return args.map(arg => {
-        const match = arg.match(/^(\w+)(\?)?\s*(?::\s*([\w$]+(?:\s*\|\s*[\w$]+)*))?\s*(?:=\s*(.+))?$/)
+        const match = arg.match(/^([$A-Z_a-z][$\w]*)(\?)?\s*(?::\s*([\w$]+(?:::[\w$]+)?(?:<[^<>]+>)?(?:\[\])?(?:\s*\|\s*[\w$]+(?:::[\w$]+)?(?:<[^<>]+>)?(?:\[\])?)*))?\s*(?:=\s*([\s\S]+))?$/)
         if (!match) return { raw: arg, name: arg, type: null, optional: false, default: null }
 
         const [, name, optional, type, def] = match
@@ -193,23 +195,6 @@ function inferDefaultType(def) {
 }
 
 function buildTypedArgsResult(parsedArgs, fnName) {
-    for (const a of parsedArgs) {
-        if (!a.type || a.type === "any" || a.default === null) continue
-
-        const types = a.type.split("|").map(t => t.trim())
-        const inferred = inferDefaultType(a.default)
-
-        if (inferred && !types.includes(inferred)) {
-            console.error([
-                "",
-                `TypeError: default value of argument "${a.name}" in "${fnName}" is ${inferred}, but declared type is "${a.type}"`,
-                `    ${a.raw}`,
-                "",
-            ].join("\n"))
-            process.exit(1)
-        }
-    }
-
     const signature = parsedArgs.map(a => {
         if (a.default !== null) return `${a.name} = ${a.default}`
         return a.name
@@ -218,15 +203,12 @@ function buildTypedArgsResult(parsedArgs, fnName) {
     const checks = parsedArgs
         .filter(a => a.type && a.type !== "any")
         .map((a, i) => {
-            const types = a.type.split("|").map(t => t.trim())
-            const mismatch = types.map(t => `__argument_typed__(${a.name}, "${t}", "${a.name}") == false`).join(" && ")
-            const expected = types.join(" or ")
+            const expected = a.type.split("|").map(t => t.trim()).join(" or ")
+            const message = a.optional
+                ? `${fnName}: argument "${a.name}" expected ${expected}`
+                : `function "${fnName}": argument<${i}> "${a.name}" expected ${expected}`
 
-            if (a.optional) {
-                return `if (${a.name} !== undefined && ${a.name} !== null && (${mismatch})) throw new ArgumentDeclarationTypeError(\`${fnName}: argument "${a.name}" expected ${expected}, got \${type(${a.name})}\`)`
-            }
-
-            return `if (${mismatch}) throw new ArgumentDeclarationTypeError(\`function "${fnName}": argument<${i}> "${a.name}" expected ${expected}, got \${type(${a.name})}\`)`
+            return `__typed_parameter__(${a.name}, "${a.type}", "${a.name}", ${a.optional}, \`${message}, got \${type(${a.name})}\`)`
         })
         .join("\n    ")
 
@@ -347,12 +329,41 @@ function replaceBinaryOperator(code, token, fn) {
     return result
 }
 
+function readTypeExtends(code, i) {
+    while (/\s/.test(code[i])) i++;
+
+    if (!code.startsWith("extends", i)) {
+        return {
+            end: i,
+            extends: null
+        };
+    }
+
+    i += "extends".length;
+
+    while (/\s/.test(code[i])) i++;
+
+    const start = i;
+
+    while (/[A-Za-z0-9_$]/.test(code[i])) i++;
+
+    return {
+        end: i,
+        extends: code.slice(start, i)
+    };
+}
+
 function parseTypes(code) {
     let result = "";
     let i = 0;
+    const isIdentifierPart = char => !!char && /[A-Za-z0-9_$]/.test(char)
 
     while (i < code.length) {
-        if (!code.startsWith("type", i)) {
+        if (
+            !code.startsWith("type", i) ||
+            isIdentifierPart(code[i - 1]) ||
+            isIdentifierPart(code[i + 4])
+        ) {
             result += code[i++];
             continue;
         }
@@ -375,9 +386,19 @@ function parseTypes(code) {
 
             let { expr, end } = extractExprForward(code, i);
 
-            if(expr.startsWith("typeof")) expr = expr.split("typeof")[1].trim()
+            const finalArgs = {}
 
-            result += `__type_def__("${typeName}", ${expr}, { type: "one-line-expr" })`;
+            if(expr.startsWith("typeof")) expr = expr.split("typeof")[1].trim()
+            if(expr.startsWith("extends")) {
+                const extendsObj = expr.split("extends")[1]
+
+                finalArgs["extends"] = extendsObj.trim()
+                expr = `"${extendsObj.trim()}"`
+            }
+
+            finalArgs["type"] = "one-line-expr"
+
+            result += `const ${typeName} = __type_def__("${typeName}", ${expr}, ${Object.keys(finalArgs).length > 0 ? JSON.stringify(finalArgs) : ""})`;
 
             i = end;
             continue;
@@ -388,12 +409,30 @@ function parseTypes(code) {
             const args = readBalanced(code, i, "(", ")");
             i = args.end;
 
+            const ext = readTypeExtends(code, i);
+            i = ext.end;
+
+            const finalArgs = {}
+
+            if(ext.extends) {
+                finalArgs["extends"] = ext.extends
+            }
+
             while (/\s/.test(code[i])) i++;
 
             const body = readBalanced(code, i, "{", "}");
             i = body.end;
 
-            result += `__type_def__("${typeName}", (${args.content}) => {${body.content}})`;
+            let bodyContent = body.content.trim()
+
+            const normalizedBody = bodyContent.replace(/;\s*$/, "").trim()
+            if (!/^return(?:\s+[\s\S]+)?$/.test(normalizedBody)) {
+                throw new TypeDefError(`The "${typeName}" type body must contain exactly one return statement`)
+            }
+
+            if (normalizedBody === "return") bodyContent = "return true"
+
+            result += `const ${typeName} = __type_def__("${typeName}", (${args.content}) => {${bodyContent}}, ${Object.keys(finalArgs).length > 0 ? JSON.stringify(finalArgs) : "{}"})`;
 
             continue;
         }
@@ -409,7 +448,7 @@ function readBalanced(code, start, open, close) {
     let depth = 0;
     let i = start;
 
-    do {
+    while (i < code.length) {
         const ch = code[i];
 
         if (ch === '"' || ch === "'" || ch === "`") {
@@ -434,12 +473,160 @@ function readBalanced(code, start, open, close) {
         if (code[i] === close) depth--;
 
         i++;
-    } while (depth > 0);
+        if (depth === 0) break
+    }
+
+    if (depth !== 0) {
+        throw new TypeDefError(`Unclosed "${open}" in type declaration`)
+    }
 
     return {
         content: code.slice(start + 1, i - 1),
         end: i
     };
+}
+
+function replaceCondOperator(code, operator, replacement) {
+    let out = ""
+    let state = "code"
+    let depth = 0
+
+    const isWord = c => c && /[A-Za-z0-9_$]/.test(c)
+
+    for (let i = 0; i < code.length; i++) {
+        const c = code[i]
+        const n = code[i + 1]
+
+        if (state === "code") {
+            if (c === "'") {
+                state = "single"
+                out += c
+                continue
+            }
+
+            if (c === '"') {
+                state = "double"
+                out += c
+                continue
+            }
+
+            if (c === "`") {
+                state = "template"
+                out += c
+                continue
+            }
+
+            if (c === "/" && n === "/") {
+                state = "lineComment"
+                out += "//"
+                i++
+                continue
+            }
+
+            if (c === "/" && n === "*") {
+                state = "blockComment"
+                out += "/*"
+                i++
+                continue
+            }
+
+            if (
+                code.startsWith(operator, i) &&
+                !isWord(code[i - 1]) &&
+                !isWord(code[i + operator.length])
+            ) {
+                out += replacement
+                i += operator.length - 1
+                continue
+            }
+
+            out += c
+            continue
+        }
+
+        if (state === "single") {
+            out += c
+            if (c === "\\" && n) {
+                out += n
+                i++
+            } else if (c === "'") {
+                state = "code"
+            }
+            continue
+        }
+
+        if (state === "double") {
+            out += c
+            if (c === "\\" && n) {
+                out += n
+                i++
+            } else if (c === '"') {
+                state = "code"
+            }
+            continue
+        }
+
+        if (state === "template") {
+            if (c === "$" && n === "{") {
+                state = "templateExpr"
+                depth = 1
+                out += "${"
+                i++
+                continue
+            }
+
+            out += c
+
+            if (c === "\\" && n) {
+                out += n
+                i++
+            } else if (c === "`") {
+                state = "code"
+            }
+
+            continue
+        }
+
+        if (state === "templateExpr") {
+            if (c === "{") depth++
+            if (c === "}") depth--
+
+            if (
+                code.startsWith(operator, i) &&
+                !isWord(code[i - 1]) &&
+                !isWord(code[i + operator.length])
+            ) {
+                out += replacement
+                i += operator.length - 1
+                continue
+            }
+
+            out += c
+
+            if (depth === 0)
+                state = "template"
+
+            continue
+        }
+
+        if (state === "lineComment") {
+            out += c
+            if (c === "\n")
+                state = "code"
+            continue
+        }
+
+        if (state === "blockComment") {
+            out += c
+            if (c === "*" && n === "/") {
+                out += "/"
+                i++
+                state = "code"
+            }
+        }
+    }
+
+    return out
 }
 
 export {
@@ -453,5 +640,6 @@ export {
     inferDefaultType,
     isInsideString,
     parseTypes,
-    readBalanced
+    readBalanced,
+    replaceCondOperator
 }

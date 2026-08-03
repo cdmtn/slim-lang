@@ -11,7 +11,8 @@
   "scripts": {
     "slim:build": "node src/compile.js",
     "slim": "node src/compile.js && node run-slim.js",
-    "slim:server": "node run-dev-slim.js"
+    "slim:server": "node run-dev-slim.js",
+    "test": "node --test"
   },
   "bin": {
     "slmc": "./src/bin/cli.js"
