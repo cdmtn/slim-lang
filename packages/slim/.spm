@@ -1,0 +1,6 @@
+name = "slim"
+description = "Slim Standart Library"
+version = "1.0"
+
+@ github
+	repo = "ZeralldMC/slim-package"

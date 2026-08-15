@@ -21,7 +21,7 @@ export function getDistPath(slimFile) {
 
 export function resolveSlimSource(raw, fromFile) {
     if (raw.startsWith("@slim/")) {
-        const libraryRoot = path.resolve("src/lib")
+        const libraryRoot = path.resolve("packages/slim")
         const libraryName = raw.slice("@slim/".length)
         const fileSource = path.resolve(libraryRoot, libraryName + slimExtension)
 

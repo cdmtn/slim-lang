@@ -11,6 +11,8 @@ import { getDistPath, resolveSlimSource } from "./modulePaths.js";
 
 const compiled = new Set()
 
+let usePackages = true
+
 function syncExternal() {
     const srcExternal = path.resolve("src/external")
     const distExternal = path.resolve("dist/external")
@@ -85,6 +87,15 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
     const code = fs.readFileSync(abs, "utf8")
 
     const uses = extractUses(code)
+
+    if (!usePackages && uses.length > 0) {
+        const err = new UseError(
+            `The "use" feature is disabled. Set "usePackages": true in slimconfig.json to enable imports (in ${abs}, found: use ${uses[0]})`
+        )
+        console.error(err)
+        process.exit(1)
+    }
+
     for (const raw of uses) {
         const depPath = resolveSlimSource(raw, abs)
 
@@ -167,6 +178,8 @@ async function main() {
         const filePath = "slimconfig.json";
         const contents = await readFile(filePath, 'utf8');
         const data = JSON.parse(contents);
+
+        usePackages = data.usePackages !== false
 
         if("main" in data) {
             syncExternal()
