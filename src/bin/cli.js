@@ -9,6 +9,7 @@ import fs from "node:fs"
 import { log, error, parseValue } from "./helpers.js"
 
 import pkg from "../../package.json" with { type: "json" };
+import defaultConfig from "./config.default.json" with { type: "json" };
 
 const root = process.cwd()
 const program = new Command();
@@ -22,8 +23,10 @@ function slimConfigCheck() {
     if (!fs.existsSync(slimConfigPath)) {
         error(`The configuration file does not exist, or it is not in the root directory. You can create the configuration file:
     ${program.name()} create --config`)
-        return false
+        process.exit(1)
     }
+
+    return true
 }
 function slimConfigRead() {
     slimConfigCheck()
@@ -33,8 +36,10 @@ function slimConfigRead() {
 function packageCheck() {
     if (!fs.existsSync(packagePath)) {
         error(`package.json was not found in the root folder of the directory`)
-        return false
+        process.exit(1)
     }
+
+    return true
 }
 
 program
@@ -71,10 +76,10 @@ program
     .option("-L, --line <line>", "View on line")
     .action((params) => {
         const config = slimConfigRead()
-        
+
         if("main" in config) {
             const mainContent = fs.readFileSync(config.main + ".slim", "utf8")
-            
+
             if(params["line"]) {
                 try {
                     let line = parseInt(params.line) - 1
@@ -105,7 +110,7 @@ program
     .option("-H, --hot", "Run server with hot reload")
     .action((hot) => {
         log("Compiling and running server...")
-        
+
         if(hot["hot"]) {
             execSync("node run-dev-slim.js --hot", { stdio: "inherit" });
         }
@@ -193,32 +198,26 @@ program
     .description("Workspace creating")
     .option("--cfg, --config", "Create config")
     .option("--file <name>", "Create file")
-    .action(async (params) => {
+    .action((params) => {
         if(params.config) {
-            const defaultConfigContent = JSON.stringify({
-                main: "path/to/slim"
-            }, null, 4)
-
-            fs.writeFile(slimConfigPath, defaultConfigContent, 'utf8', (err) => {
-                if (err) {
-                    error('An error occurred while creating config:', err);
-                    return;
-                }
+            try {
+                fs.writeFileSync(slimConfigPath, JSON.stringify(defaultConfig, null, 4), 'utf8');
                 log('Slim config create in root dir');
-            });
+            } catch (err) {
+                error('An error occurred while creating config:', err);
+            }
         }
         if(params.file) {
-            fs.writeFile(params.file + ".slim", "", 'utf8', (err) => {
-                if (err) {
-                    error('An error occurred while creating config:', err);
-                    return;
-                }
+            try {
+                fs.writeFileSync(params.file + ".slim", "", 'utf8');
                 log(`File ${params.file}.slim created`);
-            });
+            } catch (err) {
+                error('An error occurred while creating file:', err);
+            }
         }
-        else {
+        if(!params.config && !params.file) {
             log(
-`Please use the following arguments to create files: 
+`Please use the following arguments to create files:
     ${program.name()} help create
 `)
         }
@@ -268,5 +267,6 @@ try {
     program.parse();
 }
 catch (err) {
-    //
+    error(err?.message ?? err)
+    process.exitCode = 1
 }
