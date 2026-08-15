@@ -1,36 +1,43 @@
 {
-  "name": "lang",
-  "version": "1.1.1-alpha",
-  "description": "",
-  "main": "index.js",
-  "type": "module",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/cdmtn-dev/Slim-Language.git"
-  },
-  "scripts": {
-    "slim:build": "node src/compile.js",
-    "slim": "node src/compile.js && node run-slim.js",
-    "slim:server": "node run-dev-slim.js",
-    "test": "node --test"
-  },
-  "bin": {
-    "slmc": "./src/bin/cli.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@babel/generator": "^7.29.7",
-    "@babel/parser": "^7.29.7",
-    "@babel/traverse": "^7.29.7",
-    "@babel/types": "^7.29.7",
-    "chokidar": "^5.0.0",
-    "commander": "^15.0.0",
-    "magic-string": "^0.30.21",
-    "source-map": "^0.7.6"
-  },
-  "devDependencies": {
-    "@babel/plugin-transform-typescript": "^7.29.7"
-  }
+	"name": "lang",
+	"version": "1.1.1-alpha",
+	"description": "",
+	"main": "index.js",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cdmtn-dev/Slim-Language.git"
+	},
+	"scripts": {
+		"slim:build": "node src/compile.js",
+		"slim": "node src/compile.js && node run-slim.js",
+		"slim:server": "node run-dev-slim.js",
+		"test": "node --test"
+	},
+	"bin": {
+		"slmc": "./src/bin/cli.js",
+		"spm": "./src/bin/spm.js"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"@babel/generator": "^7.29.7",
+		"@babel/parser": "^7.29.7",
+		"@babel/traverse": "^7.29.7",
+		"@babel/types": "^7.29.7",
+		"@jridgewell/gen-mapping": "^0.3.13",
+		"@jridgewell/remapping": "^2.3.5",
+		"chalk": "^6.0.0",
+		"chokidar": "^5.0.0",
+		"commander": "^15.0.0",
+		"keytar": "^7.9.0",
+		"magic-string": "^0.30.21",
+		"open": "^11.0.1",
+		"source-map": "^0.7.6",
+		"tar": "^7.5.22"
+	},
+	"devDependencies": {
+		"@babel/plugin-transform-typescript": "^7.29.7"
+	}
 }
