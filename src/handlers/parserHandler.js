@@ -1,5 +1,10 @@
 import { TypeDefError } from "../external/classErrors.js"
 
+const LEADING_STATEMENT_KEYWORDS = new Set([
+    "return", "throw", "yield", "case", "do", "else",
+    "in", "of", "instanceof"
+])
+
 function extractExpr(str, startPos) {
     let depth = 0
     let i = startPos
@@ -267,6 +272,12 @@ function extractExprBackward(str, endPosExclusive) {
 
     let start = i
     while (start < contentEnd && /\s/.test(str[start])) start++
+
+    for (;;) {
+        const m = str.slice(start, contentEnd).match(/^([A-Za-z$_][\w$]*)\s+/)
+        if (!m || !LEADING_STATEMENT_KEYWORDS.has(m[1])) break
+        start += m[0].length
+    }
 
     return { expr: str.slice(start, contentEnd).trim(), start }
 }
