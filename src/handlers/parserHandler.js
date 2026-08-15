@@ -353,8 +353,8 @@ function readTypeExtends(code, i) {
     };
 }
 
-function parseTypes(code) {
-    let result = "";
+function parseTypesEdits(code) {
+    const edits = [];
     let i = 0;
     const isIdentifierPart = char => !!char && /[A-Za-z0-9_$]/.test(char)
 
@@ -364,7 +364,7 @@ function parseTypes(code) {
             isIdentifierPart(code[i - 1]) ||
             isIdentifierPart(code[i + 4])
         ) {
-            result += code[i++];
+            i++;
             continue;
         }
 
@@ -398,7 +398,11 @@ function parseTypes(code) {
 
             finalArgs["type"] = "one-line-expr"
 
-            result += `const ${typeName} = __type_def__("${typeName}", ${expr}, ${Object.keys(finalArgs).length > 0 ? JSON.stringify(finalArgs) : ""})`;
+            edits.push({
+                start,
+                end,
+                replacement: `const ${typeName} = __type_def__("${typeName}", ${expr}, ${Object.keys(finalArgs).length > 0 ? JSON.stringify(finalArgs) : ""})`
+            });
 
             i = end;
             continue;
@@ -432,16 +436,33 @@ function parseTypes(code) {
 
             if (normalizedBody === "return") bodyContent = "return true"
 
-            result += `const ${typeName} = __type_def__("${typeName}", (${args.content}) => {${bodyContent}}, ${Object.keys(finalArgs).length > 0 ? JSON.stringify(finalArgs) : "{}"})`;
+            edits.push({
+                start,
+                end: i,
+                replacement: `const ${typeName} = __type_def__("${typeName}", (${args.content}) => {${bodyContent}}, ${Object.keys(finalArgs).length > 0 ? JSON.stringify(finalArgs) : "{}"})`
+            });
 
             continue;
         }
 
-        result += code[start];
         i = start + 1;
     }
 
-    return result;
+    return edits;
+}
+
+function applyStringEdits(code, edits) {
+    let out = "";
+    let cursor = 0;
+    for (const { start, end, replacement } of edits) {
+        out += code.slice(cursor, start) + replacement;
+        cursor = end;
+    }
+    return out + code.slice(cursor);
+}
+
+function parseTypes(code) {
+    return applyStringEdits(code, parseTypesEdits(code));
 }
 
 function readBalanced(code, start, open, close) {
@@ -640,6 +661,7 @@ export {
     inferDefaultType,
     isInsideString,
     parseTypes,
+    parseTypesEdits,
     readBalanced,
     replaceCondOperator
 }

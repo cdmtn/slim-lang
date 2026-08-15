@@ -1,21 +1,16 @@
 import { idify } from "../../external/helpers.js";
 
-function parseComponents(code) {
-    let out = "";
+function parseComponentsEdits(code) {
+    const edits = [];
     let i = 0;
 
     while (i < code.length) {
         const match = code.slice(i).match(/\b(?:(isolated)\s+)?component\b/);
 
-        if (!match) {
-            out += code.slice(i);
-            break;
-        }
+        if (!match) break;
 
         const isolated = !!match[1];
         const start = i + match.index;
-
-        out += code.slice(i, start);
 
         let p = start + match[0].length;
 
@@ -60,12 +55,23 @@ function parseComponents(code) {
 
         const body = code.slice(bodyStart, p - 1);
 
-        out += buildComponent(name, args, body, isolated);
+        edits.push({ start, end: p, replacement: buildComponent(name, args, body, isolated) });
 
         i = p;
     }
 
-    return out;
+    return edits;
+}
+
+function parseComponents(code) {
+    const edits = parseComponentsEdits(code);
+    let out = "";
+    let cursor = 0;
+    for (const { start, end, replacement } of edits) {
+        out += code.slice(cursor, start) + replacement;
+        cursor = end;
+    }
+    return out + code.slice(cursor);
 }
 
 function buildComponent(name, args, body, isolated = false) {
@@ -106,5 +112,6 @@ function buildComponent(name, args, body, isolated = false) {
 
 export {
     parseComponents,
+    parseComponentsEdits,
     buildComponent
 }

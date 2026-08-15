@@ -1,11 +1,17 @@
 import { parse } from "@babel/parser"
 import _traverse from "@babel/traverse"
 import _generate from "@babel/generator"
+import remapping from "@jridgewell/remapping"
 import { preprocess } from "./parser.js"
 import * as t from "@babel/types"
-import { SourceMapConsumer } from "source-map"
 import path from "node:path"
 import { getDistPath, resolveSlimImport } from "./modulePaths.js"
+import {
+    PRE_SOURCE,
+    buildPreMap,
+    computeLineStarts,
+    mapPreToOriginal
+} from "./sourcemap.js"
 
 const traverse = _traverse.default ?? _traverse
 const generate = _generate.default ?? _generate
@@ -411,7 +417,7 @@ function parseSpecifiers(name) {
     return [t.importSpecifier(t.identifier(trimmed), t.identifier(trimmed))]
 }
 
-function formatSyntaxError(err, originalCode, sourceFile, preprocessMap) {
+function formatSyntaxError(err, originalCode, sourceFile, mapped) {
     const loc = err.loc
 
     if (!loc) {
@@ -419,29 +425,21 @@ function formatSyntaxError(err, originalCode, sourceFile, preprocessMap) {
         process.exit(1)
     }
 
-    const col = loc.column + 1
+    const preLineStarts = computeLineStarts(mapped.text)
+    const origLineStarts = computeLineStarts(originalCode)
+    const { line, column } = mapPreToOriginal(
+        mapped, preLineStarts, origLineStarts, loc.line - 1, loc.column
+    )
+
     const lines = originalCode.split("\n")
-
-    let originalLine = loc.line
-    try {
-        const mapJson = preprocessMap.toJSON()
-        const genLines = mapJson.sourcesContent?.[0]?.split("\n") ?? []
-        const targetLine = lines[loc.line - 1]?.trim()
-
-        if (targetLine) {
-            const found = lines.findIndex(l => l.trim() === targetLine)
-            if (found !== -1) originalLine = found + 1
-        }
-    } catch { }
-
-    const sourceLine = lines[originalLine - 1] ?? ""
-    const indent = sourceLine.search(/\S/)
-    const pointer = " ".repeat(Math.max(0, col - indent - 1)) + "^"
+    const sourceLine = lines[line - 1] ?? ""
+    const indent = sourceLine.length - sourceLine.trimStart().length
+    const pointer = " ".repeat(Math.max(0, column - 1 - indent)) + "^"
 
     console.error([
         "",
         `SyntaxError: ${err.reasonCode ?? "Unexpected token"}`,
-        `    at ${sourceFile}:${originalLine}:${col}`,
+        `    at ${sourceFile}:${line}:${column}`,
         "",
         `  ${sourceLine.trim()}`,
         `  ${pointer}`,
@@ -456,7 +454,7 @@ export function transform(code, sourceFile = "input.ps") {
     const imports = new Map()
     const wildcards = []
 
-    const { code: pre, map: preprocessMap } = preprocess(code, sourceFile)
+    const { code: pre, mapped } = preprocess(code, sourceFile)
 
     // console.log(pre)
     // process.exit(0)
@@ -469,7 +467,7 @@ export function transform(code, sourceFile = "input.ps") {
         })
     } catch (err) {
         if (err.code === "BABEL_PARSER_SYNTAX_ERROR") {
-            formatSyntaxError(err, code, sourceFile, preprocessMap)
+            formatSyntaxError(err, code, sourceFile, mapped)
         }
         throw err
     }
@@ -611,9 +609,19 @@ export function transform(code, sourceFile = "input.ps") {
         tryBlock
     ]
 
-    const { code: output } = generate(ast, { sourceMaps: false }, pre)
+    const { code: output, map: generatedMap } = generate(
+        ast,
+        { sourceMaps: true, sourceFileName: PRE_SOURCE },
+        pre
+    )
 
-    const mapComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(preprocessMap.toString()).toString("base64")
+    const preMap = buildPreMap(mapped, code, sourceFile)
+    const finalMap = remapping(
+        generatedMap,
+        file => (file === PRE_SOURCE ? preMap : null)
+    )
+
+    const mapComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(finalMap)).toString("base64")
         }`
 
     return { code: output + mapComment }

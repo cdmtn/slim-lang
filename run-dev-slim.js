@@ -14,7 +14,7 @@ let rebuilding = false;
 let pending = false;
 
 function run() {
-    app = spawn("node", [entry], {
+    app = spawn("node", ["--enable-source-maps", "--no-warnings", entry], {
         stdio: "inherit",
         detached: process.platform !== "win32",
         env: {

@@ -6,7 +6,7 @@ import {
     SlimVariableType, SlimVariableTypes, Struct, Component, Enum, EnumValue,
     isSameType
 } from "./types.js"
-import { formatError } from "./classErrors.js"
+import { formatError, resolveErrorLocation } from "./classErrors.js"
 
 const __structs__ = {}
 const __enums__ = {}
@@ -29,34 +29,24 @@ const __RESERVED_DEFINES__ = new Set([
 ])
 export const __custom_types__ = {}
 
+function reportError(err) {
+    const loc = resolveErrorLocation(err)
+    process.stderr.write(formatError(
+        err?.tag ?? err?.name ?? "Error",
+        err?.message ?? String(err),
+        loc?.file ?? null,
+        loc?.line ?? null,
+        loc?.col ?? null,
+        loc?.sourceLine ?? null,
+    ) + "\n")
+}
+
 export function __handle_async_error__(err) {
-    if (err?.tag) {
-        process.stderr.write(formatError(
-            err.tag,
-            err.message,
-            err.file ?? null,
-            err.line ?? null,
-            err.col ?? null,
-            err.sourceLine ?? null,
-        ) + "\n")
-    } else {
-        process.stderr.write(`\nError: ${err?.message ?? String(err)}\n\n`)
-    }
+    reportError(err)
     process.exit(1)
 }
 export function __handle_sync_error__(err) {
-    if (err?.tag) {
-        process.stderr.write(formatError(
-            err.tag,
-            err.message,
-            err.file ?? null,
-            err.line ?? null,
-            err.col ?? null,
-            err.sourceLine ?? null,
-        ) + "\n")
-    } else {
-        process.stderr.write(`\nError: ${err?.message ?? String(err)}\n\n`)
-    }
+    reportError(err)
     process.exit(1)
 }
 

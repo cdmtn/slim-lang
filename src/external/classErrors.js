@@ -34,9 +34,22 @@ function resolveOriginalLine(generatedLine) {
     }
 }
 
+function isInternalFrame(normalized) {
+    return (
+        normalized.includes("node_modules") ||
+        normalized.includes("node:") ||
+        normalized.includes("/external/") ||
+        normalized.includes("/src/handlers/") ||
+        normalized.includes("/src/compile.js") ||
+        normalized.includes("/src/transform.js") ||
+        normalized.includes("/src/parser.js")
+    )
+}
+
 function parseStack(stack) {
     if (!stack) return null
 
+    const frames = []
     for (const line of stack.split("\n")) {
         const match = line.match(/at .+ \((.+):(\d+):(\d+)\)/)
             ?? line.match(/at (.+):(\d+):(\d+)/)
@@ -44,22 +57,16 @@ function parseStack(stack) {
         if (!match) continue
 
         const [, file, ln, col] = match
+        const normalized = file.replace(/^file:\/\/\//, "").replace(/\\/g, "/")
 
-        if (
-            file.includes("node_modules") ||
-            file.includes("node:internal") ||
-            file.includes("src/defaults") ||
-            file.includes("src/errorHandler") ||
-            file.includes("src/classErrors") ||
-            file.includes("src/handlers") ||
-            file.includes("dist/outputs")
-        ) continue
+        if (isInternalFrame(normalized)) continue
 
-        return {
-            file: file.replace(/^file:\/\/\//, "").replace(/\\/g, "/"),
-            line: parseInt(ln),
-            col: parseInt(col)
-        }
+        frames.push({ file: normalized, line: parseInt(ln), col: parseInt(col) })
+    }
+
+    const slimFrame = frames.find(f => f.file.endsWith(".slim"))
+    if (slimFrame || frames.length) {
+        return slimFrame ?? frames[0]
     }
 
     for (const line of stack.split("\n")) {
@@ -90,6 +97,27 @@ function getSourceLine(file, line) {
         return content.split("\n")[line - 1]?.replace(/\r$/, "") ?? null
     } catch {
         return null
+    }
+}
+
+export function resolveErrorLocation(err) {
+    if (err?.file && err?.line) {
+        return {
+            file: err.file,
+            line: err.line,
+            col: err.col ?? null,
+            sourceLine: err.sourceLine ?? getSourceLine(err.file, err.line)
+        }
+    }
+
+    const loc = parseStack(err?.stack)
+    if (!loc) return null
+
+    return {
+        file: loc.file,
+        line: loc.line,
+        col: loc.col ?? null,
+        sourceLine: getSourceLine(loc.file, loc.line)
     }
 }
 
