@@ -1,6 +1,6 @@
 import http from "http";
 
-type ServerInstance = typeof Server;
+export type ServerInstance = typeof Server;
 
 class Server {
     constructor(port: int = 3000) {
@@ -9,10 +9,49 @@ class Server {
         this.clients = [];
     }
 
-    page(path: string, render: function) {
+	page(path: string, render: function, options: object) {
+		let additionalScript = ""
+
+		func renderTag(content: string[]) {
+			const tags: object = {
+				"css": {
+					tag: "link",
+					attr: "href"
+				},
+				"js": {
+					tag: "script",
+					attr: "src"
+				},
+			}
+
+			content.forEach(c => {
+				const r = Math.floor(Math.random() + 1) * 999
+				const ext = c.split(".").pop()
+
+				if (ext in tags) {
+					const tag = tags[ext].tag
+					const attr = tags[ext].attr
+					const varName = `${tag}_${r}`
+
+					additionalScript += `
+						const ${varName} = document.createElement("${tag}");\n
+						${varName}.${attr} = "${c}";
+						document.head.appendChild(${varName});
+					`
+				}
+			})
+		}
+
+		if ("head" in options) {
+			renderTag(options.head)
+		}
+		if ("title" in options) {
+			additionalScript += `document.title = "${options.title}";`
+		}
+
         this.get(path, (req, res) => {
             const isDev = process.env.SLIM_DEV === "1"
-            let html = render({ dev: isDev });
+			let html = render({ dev: isDev });
 
             if (isDev) {
                 html += `
@@ -29,6 +68,8 @@ class Server {
                             }
                             connectedBefore = true;
                         };
+
+                        ${additionalScript};
                     })();
                 </script>`;
             }

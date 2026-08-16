@@ -1,12 +1,12 @@
 {
-	"name": "lang",
+	"name": "slim",
 	"version": "1.1.2-alpha",
 	"description": "",
 	"main": "index.js",
 	"type": "module",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/cdmtn-dev/Slim-Language.git"
+		"url": "git+https://github.com/cdmtn/slim-lang.git"
 	},
 	"scripts": {
 		"slim:build": "node src/compile.js",
