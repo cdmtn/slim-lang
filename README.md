@@ -35,6 +35,7 @@ Before installation, you must create a project directory where the Slim source c
   
   ```console
   npm i
+  npm link
   ```
 
 - Check if all Slim CLI Installed
@@ -43,7 +44,6 @@ Before installation, you must create a project directory where the Slim source c
   slmc --version
   spm --version
   ```
-  If you're having trouble with this step, try running `npm link` and retry
 
 - Create Slim config:
   
@@ -62,7 +62,7 @@ You created slimconfig.json and added a `main` key with the value `index`. When 
 
 ## Examples
 
-All checks in Slim are runtime checks (that is, unlike TypeScript's type checks). They actually exist in the code.
+All type checks in Slim are performed at runtime. Unlike TypeScript, Slim does not erase these checks during compilation
 
 **Examples of runtime data validation structures:**
 ```cpp
