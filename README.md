@@ -69,20 +69,20 @@ All type checks in Slim are performed at runtime. Unlike TypeScript, Slim does n
 struct User {
     name: string | any
     id: int
-    roles: string[]
+    roles: string[] // string array (string[])
 }
 
 // Let's assume that the data came from an API
 const user = {
     name: "John",
     id: 3,
-    roles: []
+    roles: [] // null array (null[])
 }
 
 User.verify(user) // ❌ StructError: "User.roles" expected string[], got null[]
 ```
 
-**Examples of All Operators and Their Uses**:
+**Built-in Operators**:
 
 ```typescript
 // sizeof 
@@ -113,7 +113,7 @@ lock a;
 a.name = "Arthur" // ❌ Error: Cannot assign to read only property 'name' of object '#<Object>'
 ```
 
-**A prototype of Enum:**
+**Basic enum example:**
 
 ```cpp
 enum Role {
