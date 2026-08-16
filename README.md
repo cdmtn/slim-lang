@@ -37,6 +37,7 @@ Before installation, you must create a project directory where the Slim source c
   npm i
   npm link
   ```
+  On mac/linux this may cause a permission error, try using `sudo npm link`
 
 - Check if all Slim CLI Installed
   
