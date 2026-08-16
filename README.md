@@ -22,13 +22,28 @@ Requirements:
 - Node.js 22+
 - Git
 
-Installation
-```console
-git clone https://github.com/cdmtn/slim-lang.git
-slmc --version
-```
+## Installation
+Before installation, you must create a project directory where the Slim source code will be stored. After creating the folder, run a couple of commands inside it:
 
-During installation, you’ll need to create a folder to hold your Slim project. Once you’ve created it, run some commands:
+- Clone project
+  
+  ```console
+  git clone https://github.com/cdmtn/slim-lang.git
+  ```
+
+- Install all deps
+  
+  ```console
+  npm i
+  ```
+
+- Check if all Slim CLI Installed
+  
+  ```console
+  slmc --version
+  spm --version
+  ```
+  If you're having trouble with this step, try running `npm link` and retry
 
 - Create Slim config:
   
