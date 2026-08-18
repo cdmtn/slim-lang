@@ -1,5 +1,5 @@
 import {
-    StructPassedError, StructError, StructExpectError, StructResultError, ArgumentDeclarationTypeError,
+    StructPassedError, StructError, StructExpectError, ArgumentDeclarationTypeError,
     EnumError
 } from "./classErrors.js"
 import {
@@ -7,6 +7,7 @@ import {
     isSameType
 } from "./types.js"
 import { formatError, resolveErrorLocation } from "./classErrors.js"
+import { htmlToVdom, HTMLElement, __html__, __flush_events__ } from "./helpers.js"
 
 const __structs__ = {}
 const __enums__ = {}
@@ -144,6 +145,9 @@ export function type(obj, properties = {}) {
     if (obj === undefined) return "undefined"
     if (Number.isNaN(obj)) return "NaN"
 
+    if (obj instanceof HTMLElement) return "element"
+    if (obj && obj.nodeType === 11) return "fragment"
+
     if(typeof obj == "function" && obj.__type__ == true) return "type"
 
     if (typeof obj == "object" && obj instanceof SlimVariableType) {
@@ -158,7 +162,7 @@ export function type(obj, properties = {}) {
     }
     if (typeof obj == "object" && !Array.isArray(obj) && obj instanceof EnumValue) {
         return "enum"
-    }
+	}
 
     if (typeof obj === "function" && obj.__component__ == true) return "component"
 
@@ -513,9 +517,9 @@ export function __typed__(value, structName, returnMethod = "default") {
     const structDef = typeof structName === "string" ? __structs__[structName] : structName
     if (!structDef) throw new StructError(`Unknown struct "${structName}"`)
 
-    const fail = error => {
+    const fail = (error, properties = {}) => {
         if (returnMethod === "errorResult") {
-            return { success: false, result: { type: error.tag, msg: String(error) } }
+            return { success: false, result: { type: error.tag, msg: String(error) }, properties }
         }
         throw error
     }
@@ -545,7 +549,13 @@ export function __typed__(value, structName, returnMethod = "default") {
         if (!__type_matches__(definition.specification, value[field])) {
             return fail(new StructError(
                 `"${name}.${field}" expected ${__type_label__(definition.specification)}, got ${type(value[field])}`
-            ))
+            ), {
+            	name: name,
+             	field: field,
+              	expected: __type_label__(definition.specification),
+               	got: type(value[field]),
+                fieldName: `${name}.${field}`
+            })
         }
     }
 
@@ -649,5 +659,5 @@ Object.assign(globalThis, {
 
     StructError, StructPassedError, StructExpectError, ArgumentDeclarationTypeError,
 
-    PI
+    PI, htmlToVdom, HTMLElement, __html__, __flush_events__
 })

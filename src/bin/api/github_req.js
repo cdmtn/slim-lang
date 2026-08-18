@@ -297,7 +297,7 @@ export async function updateGitHubRepo({
     };
 }
 
-export async function createGitHubRepo(token, repository) {
+export async function createGitHubRepo(token, repository, organization = false) {
     const match = repository.match(
         /^([a-zA-Z0-9-]+)\/([a-zA-Z0-9._-]+)$/
     );
@@ -335,33 +335,43 @@ export async function createGitHubRepo(token, repository) {
             };
         }
 
-        const userResponse = await fetch(
-            `${GITHUB_API}/user`,
-            {
-                headers: githubHeaders(token)
+        // For a user repo the owner must be the authenticated account. For an
+        // organization repo the owner is the org, so that check is skipped and
+        // the repo is created through the org endpoint (GitHub rejects it if
+        // the account lacks permission).
+        if (!organization) {
+            const userResponse = await fetch(
+                `${GITHUB_API}/user`,
+                {
+                    headers: githubHeaders(token)
+                }
+            );
+
+            if (!userResponse.ok) {
+                const data = await userResponse.json();
+
+                return {
+                    success: false,
+                    msg: data.message || "Failed to get GitHub user"
+                };
             }
-        );
 
-        if (!userResponse.ok) {
-            const data = await userResponse.json();
+            const user = await userResponse.json();
 
-            return {
-                success: false,
-                msg: data.message || "Failed to get GitHub user"
-            };
+            if (user.login.toLowerCase() !== owner.toLowerCase()) {
+                return {
+                    success: false,
+                    msg: `You cannot create ${repository}. Your GitHub account is ${user.login}`
+                };
+            }
         }
 
-        const user = await userResponse.json();
-
-        if (user.login.toLowerCase() !== owner.toLowerCase()) {
-            return {
-                success: false,
-                msg: `You cannot create ${repository}. Your GitHub account is ${user.login}`
-            };
-        }
+        const createUrl = organization
+            ? `${GITHUB_API}/orgs/${owner}/repos`
+            : `${GITHUB_API}/user/repos`;
 
         const response = await fetch(
-            `${GITHUB_API}/user/repos`,
+            createUrl,
             {
                 method: "POST",
                 headers: githubHeaders(token, {

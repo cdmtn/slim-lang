@@ -32,6 +32,7 @@
 		"chokidar": "^5.0.0",
 		"commander": "^15.0.0",
 		"keytar": "^7.9.0",
+		"linkedom": "^0.18.13",
 		"magic-string": "^0.30.21",
 		"open": "^11.0.1",
 		"source-map": "^0.7.6",

@@ -20,14 +20,14 @@ export function getDistPath(slimFile) {
 }
 
 export function resolveSlimSource(raw, fromFile) {
-    if (raw.startsWith("@slim/")) {
-        const libraryRoot = path.resolve("packages/slim")
-        const libraryName = raw.slice("@slim/".length)
-        const fileSource = path.resolve(libraryRoot, libraryName + slimExtension)
+    if (raw.startsWith("@")) {
+        const packagesRoot = path.resolve("packages")
+        const packageName = raw.slice("@".length)
+        const fileSource = path.resolve(packagesRoot, packageName + slimExtension)
 
         if (fs.existsSync(fileSource)) return fileSource
 
-        const directorySource = path.resolve(libraryRoot, libraryName, "main.slim")
+        const directorySource = path.resolve(packagesRoot, packageName, "main.slim")
         if (fs.existsSync(directorySource)) return directorySource
 
         return fileSource

@@ -239,7 +239,13 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
         )
         const scopePath = scope.path
 
-        if (scopePath.isProgram() || scopePath.isBlockStatement()) {
+        if (scopePath.isProgram()) {
+            // Mark module-scope slots so they can be hoisted above the try
+            // wrapper: exported typed declarations stay at the top level, and
+            // their slots must be declared there too — not inside the try.
+            declaration._slimTypeSlots = true
+            scopePath.unshiftContainer("body", declaration)
+        } else if (scopePath.isBlockStatement()) {
             scopePath.unshiftContainer("body", declaration)
         } else if (scopePath.isFunction()) {
             scopePath.get("body").unshiftContainer("body", declaration)
@@ -567,6 +573,7 @@ export function transform(code, sourceFile = "input.ps") {
         }
     }
 
+    const slotDecls = []
     const topLevel = []
     const rest = []
 
@@ -574,7 +581,9 @@ export function transform(code, sourceFile = "input.ps") {
         if (t.isImportDeclaration(node)) continue
         if (t.isExportNamedDeclaration(node) || t.isExportDefaultDeclaration(node) || t.isExportAllDeclaration(node)) continue
 
-        if (
+        if (node._slimTypeSlots) {
+            slotDecls.push(node)
+        } else if (
             (t.isFunctionDeclaration(node) || t.isClassDeclaration(node)) &&
             node.id && exportedNames.has(node.id.name)
         ) {
@@ -604,6 +613,7 @@ export function transform(code, sourceFile = "input.ps") {
         ...wildcardNodes,
         ...importNodes,
         ...existingImports,
+        ...slotDecls,
         ...topLevel,
         ...exportDeclarations,
         tryBlock

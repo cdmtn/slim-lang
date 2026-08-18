@@ -385,9 +385,14 @@ function parseTypesEdits(code) {
         while (/\s/.test(code[i])) i++;
 
         const nameStart = i;
-        while (/[A-Za-z0-9_$]/.test(code[i])) i++;
+        while (isIdentifierPart(code[i])) i++;
 
         const typeName = code.slice(nameStart, i);
+
+        if (!typeName) {
+            i = start + 1;
+            continue;
+        }
 
         while (/\s/.test(code[i])) i++;
 

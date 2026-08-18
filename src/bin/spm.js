@@ -108,7 +108,13 @@ spm
             }
 
 			const SPMContent = spmFileContent.content;
-			const packageName = "@" + name
+			let packageName = "@" + name
+
+			const infoFromRegistryReq = await getPackage({ name: name })
+
+			if(infoFromRegistryReq.success) {
+				packageName = `${packageName} (${infoFromRegistryReq.content.latest})`
+			}
 
 			msg = renderBlock({
 				name: packageName,
@@ -276,13 +282,14 @@ spm
 			const SPMContent = spmFileContent.content;
 			const packageName = "@" + name;
 			const githubRepo = SPMContent.github.repo
+			const organization = SPMContent.github.organization === true
 
 			await loading({
 				startMsg: `Creating repository for ${packageName}`,
 				callback: async ({ fail, ok }) => {
 					const githubToken = await getGitHubToken();
 
-					const createRepoReq = await createGitHubRepo(githubToken, githubRepo)
+					const createRepoReq = await createGitHubRepo(githubToken, githubRepo, organization)
 
 					if (!createRepoReq.success) {
 						return fail(createRepoReq.msg)

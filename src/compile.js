@@ -50,10 +50,10 @@ function extractUses(code) {
     const uses = []
 
     const patterns = [
-        // use @slim/pkg
-        /\buse\s+(@slim\/[\w$\/.-]+)\s*;?$/gm,
-        // use { X } from @slim/pkg
-        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+(@slim\/[\w$\/.-]+)\s*;?$/gm,
+        // use @scope/pkg
+        /\buse\s+(@[\w$\/.-]+)\s*;?$/gm,
+        // use { X } from @scope/pkg
+        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+(@[\w$\/.-]+)\s*;?$/gm,
         // use { X } from "file"
         /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+"([^"]+)"\s*;?$/gm,
         // use "file"

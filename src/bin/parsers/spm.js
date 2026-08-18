@@ -74,7 +74,7 @@ export function parseSPM(content) {
     const required = ["name", "version"]
 	const allowedRoot = new Set(["name", "version", "description"]);
 
-	const githubSectionAllowed = new Set(["repo"]);
+	const githubSectionAllowed = new Set(["repo", "organization"]);
 
 	let currentSection = null;
 
@@ -145,6 +145,10 @@ export function parseSPM(content) {
 					throw new Error(`@${sectionName}/${key}: ${repoTest.msg}`);
 				}
 			}
+
+			if (key === "organization" && value !== "true" && value !== "false") {
+				throw new Error(`@${sectionName}/${key} must be "true" or "false"`);
+			}
 		}
 
         let target = result;
@@ -157,7 +161,9 @@ export function parseSPM(content) {
             throw new Error(`duplicate property "${key}"`);
         }
 
-        target[key] = value;
+        target[key] = (sectionName === "github" && key === "organization")
+            ? value === "true"
+            : value;
     }
 
     // Required properties

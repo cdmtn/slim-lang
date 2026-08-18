@@ -1,5 +1,3 @@
-import { idify } from "../../external/helpers.js";
-
 function parseComponentsEdits(code) {
     const edits = [];
     let i = 0;
@@ -74,6 +72,18 @@ function parseComponents(code) {
     return out + code.slice(cursor);
 }
 
+function componentBinding(name, args) {
+    const trimmed = args.trim();
+
+    if (!trimmed) return "";
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+    if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) return trimmed;
+
+    throw new Error(
+        `Component "${name}" arguments must be a single object name (e.g. "props") or a destructuring pattern (e.g. "{ content }"), got: "${trimmed}"`
+    );
+}
+
 function buildComponent(name, args, body, isolated = false) {
     const match = body.match(/return\s*\(?\s*([\s\S]*?)\s*\)?\s*$/);
 
@@ -85,25 +95,26 @@ function buildComponent(name, args, body, isolated = false) {
         .trim()
         .replace(/`/g, "\\`");
 
-    const encodedName = `${name}_Component`
+    const before = body.split("return")[0].trim();
+    const binding = componentBinding(name, args);
+    const param = binding ? `${binding} = {}` : "";
 
     if(!isolated) {
         return `
-        const ${name} = (args = {}) => { 
-            let { ${args} } = args;
-            ${body.split("return")[0].trim()}; 
-            return \`${html}\`; 
+        const ${name} = (${param}) => {
+        	const s = {};
+            ${before};
+            return htmlToVdom(__html__\`${html}\`).toElement();
         };
         ${name}.__component__ = true
         `;
     }
     else {
-        const argsSplitted = args.split(",").map(item => `"${item.trim()}"`)
+        const fnBody = `${before}; return htmlToVdom(__html__\`${html}\`).toElement();`;
 
         return `
-        const ${name} = (args = {}) => { 
-            let { ${args} } = args;
-            return new Function(${argsSplitted}, "${body.split("return")[0].trim()}; return \`${html}\`;")(${args}) 
+        const ${name} = (__props__ = {}) => {
+            return new Function(${JSON.stringify(binding)}, ${JSON.stringify(fnBody)})(__props__);
         };
         ${name}.__component__ = true
         `;
