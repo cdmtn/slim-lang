@@ -28,6 +28,14 @@ function getTypeReferenceName(typeText) {
     return withoutGeneric.split("::")[0]
 }
 
+// Builtin type names are always matched by label; they must never be resolved
+// through a same-named binding in scope (e.g. a `const string` variable would
+// otherwise shadow the primitive `string` type).
+const BUILTIN_TYPE_NAMES = new Set([
+    "int", "float", "number", "string", "bool", "null", "undefined",
+    "object", "array", "function", "any", "element"
+])
+
 function buildTypeSpec(typeText, path_, importedNames = new Set()) {
     typeText = typeText.trim()
     if (typeText.endsWith("?")) {
@@ -42,7 +50,7 @@ function buildTypeSpec(typeText, path_, importedNames = new Set()) {
         const binding = referenceName ? path_.scope.getBinding(referenceName) : null
         const args = [t.stringLiteral(label)]
 
-        if (binding || importedNames.has(referenceName)) {
+        if ((binding || importedNames.has(referenceName)) && !BUILTIN_TYPE_NAMES.has(referenceName)) {
             args.push(t.arrowFunctionExpression([], t.identifier(referenceName)))
         }
 
