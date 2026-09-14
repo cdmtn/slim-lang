@@ -1,0 +1,26 @@
+use { readFile } from 'fs/promises';
+use { join } from 'path';
+
+use { SemVer } from @slim/types/formats
+
+export struct Slim {
+    version: SemVer
+    root: string
+}
+
+export async func getPackageData(): object {
+    try {
+        const filePath = join(process.cwd(), 'package.json'); 
+        const fileContent = await readFile(filePath, 'utf-8');
+        
+        const packageData = JSON.parse(fileContent);
+        return Slim.new({ version: packageData.version, root: process.cwd() })
+    } catch (error) {
+        return Slim.new({ version: "undefined", root: process.cwd() })
+    }
+}
+
+export async func getVersion(): SemVer {
+    const pkg = await getPackageData()
+    return pkg.version
+}

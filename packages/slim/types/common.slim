@@ -1,0 +1,6 @@
+export type SymbolInstance(v) {
+    return kindof v == "symbol"
+}
+export type AnyArray(v) {
+    return typeof v == "object" and Array.isArray(v)
+}

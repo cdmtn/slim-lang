@@ -1,19 +1,20 @@
-import * as crypto from "node:crypto"
+use * as crypto from "node:crypto"
+use { SHA256, QuickHash } from @slim/types/hash
 
-export const string: object = {
-    len(string: string) {
-        if(typeof string == "string") return string.length
+export default const StringHelper: object = {
+    len(str: string): int {
+        if(kindof str == "string") return str.length
     },
-    truncate(str: string, maxLength: int) {
+    truncate(str: string, maxLength: int): string {
         if (str.length > maxLength) {
             return str.slice(0, maxLength) + '...';
         }
         return str;
     },
-    hash(str: string) {
+    hash(str: string): SHA256 {
         return crypto.createHash("sha256").update(str).digest("hex")
     },
-    quickHash(str: string) {
+    quickHash(str: string): QuickHash {
         let hash = 0;
         for (let i = 0; i < str.length; i++) {
             hash = (hash << 5) - hash + str.charCodeAt(i);
@@ -23,4 +24,4 @@ export const string: object = {
     }
 }
 
-lock string;
+lock StringHelper;

@@ -1,0 +1,23 @@
+export func __isJSON(value) {
+    try {
+        JSON.parse(value)
+        return true
+    }
+    catch (e) {
+        return false
+    }
+}
+
+export type HTMLObject(v) {
+    return v instanceof HTMLElement
+}
+export type HTMLString(v) {
+    return /<\/?[^>]+(>|$)/g.test(v)
+}
+export type JSONString(v) {
+    return __isJSON(v)
+}
+
+export type SemVer(v) {
+    return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/.test(v);
+}

@@ -1,5 +1,9 @@
-export func int(value: string) {
-    if (type(value) == "int") return value
+use { SymbolInstance, AnyArray } from @slim/types/common
+use { TimeStamp } from @slim/types/time
+use { JSONString } from @slim/types/formats
+
+export func int(value: string | int): int {
+    if (kindof value == "int") return value
 
     const result = Number(value)
 
@@ -10,7 +14,7 @@ export func int(value: string) {
     return result
 }
 
-export func float(value: string | float | int) {
+export func float(value: string | float | int): number {
     if (type(value) == "float") return value
 
     const result = Number(value)
@@ -22,7 +26,7 @@ export func float(value: string | float | int) {
     return result
 }
 
-export func number(value: string | float) {
+export func number(value: string | float | int): number {
     if (typeof value == "number") return value
 
     const result = Number(value)
@@ -34,11 +38,11 @@ export func number(value: string | float) {
     return result
 }
 
-export func string(value: any) {
+export func string(value: any): string {
     return String(value)
 }
 
-export func bool(value: int | float | string) {
+export func bool(value: int | float | string | bool): bool {
     if (typeof value == "boolean") return value
 
     if (typeof value == "number") {
@@ -55,7 +59,7 @@ export func bool(value: int | float | string) {
     return Boolean(value)
 }
 
-export func bigint(value: int | float) {
+export func bigint(value: number): number {
     try {
         return BigInt(value)
     }
@@ -64,17 +68,17 @@ export func bigint(value: int | float) {
     }
 }
 
-export func symbol(value: any) {
+export func symbol(value: any): SymbolInstance {
     return Symbol(String(value))
 }
 
-export func array(value: any) {
+export func array(value: any): AnyArray {
     if (Array.isArray(value)) return value
 
     return [value]
 }
 
-export func date(value: int | float) {
+export func date(value: TimeStamp): any {
     const result = new Date(value)
 
     if (Number.isNaN(result.getTime())) {
@@ -84,7 +88,7 @@ export func date(value: int | float) {
     return result
 }
 
-export func json(value: any) {
+export func json(value: AnyArray | string | number | object): object {
     if (typeof value == "string") {
         try {
             return JSON.parse(value)
@@ -95,4 +99,8 @@ export func json(value: any) {
     }
 
     return JSON.parse(JSON.stringify(value))
+}
+
+export func jsonstr(value: AnyArray | string | number | object): JSONString {
+    return JSON.stringify(value)
 }
