@@ -681,6 +681,11 @@ function structuralEdits(text) {
                 const head = declarationHead.exec(src)
                 if (!head) return null
 
+                // `export default const X: T = ...` is not valid JS as a single
+                // statement; lower it to a typed declaration plus `export default X`.
+                const leadingDefault = src.slice(0, i).match(/export\s+default\s+$/)
+                const start = leadingDefault ? i - leadingDefault[0].length : i
+
                 const annotation = readTypeAnnotation(src, i + head[0].length)
                 if (!annotation) return null
 
@@ -689,17 +694,26 @@ function structuralEdits(text) {
                 if (src[equals] !== "=" || src[equals + 1] === "=" || src[equals + 1] === ">") return null
 
                 const { expr, start: exprStart, end } = extractExprRaw(src, equals + 1)
-                return { start: i, end, keyword: head[1], name: head[2], type: annotation.type, expr, exprStart }
+                return {
+                    start, end, keyword: head[1], name: head[2], type: annotation.type,
+                    expr, exprStart, defaultExport: !!leadingDefault
+                }
             },
-            ({ keyword, name, type, expr, exprStart }) => {
+            ({ keyword, name, type, expr, exprStart, defaultExport }) => {
                 const pattern = name.startsWith("{") || name.startsWith("[")
+                // Keep the declaration exported so the module wrapper leaves it at
+                // top level, then re-export the binding as default. Emitting a bare
+                // `const` plus `export default X` would trap the `const` in the
+                // module's try/catch, leaving the default export undefined.
+                const prefix = defaultExport ? "export " : ""
                 const head = pattern
-                    ? `${keyword} ${name} = __typed_pattern__(`
-                    : `${keyword} ${name} = __typed_variable__(`
+                    ? `${prefix}${keyword} ${name} = __typed_pattern__(`
+                    : `${prefix}${keyword} ${name} = __typed_variable__(`
                 const tail = pattern ? `, "${type}")` : `, "${type}", "${name}")`
+                const suffix = defaultExport ? `\nexport { ${name} as default }` : ""
 
                 return {
-                    replacement: `${head}${expr}${tail}`,
+                    replacement: `${head}${expr}${tail}${suffix}`,
                     spans: [{ at: head.length, from: exprStart, length: expr.length }]
                 }
             }
