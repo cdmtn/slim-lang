@@ -1,0 +1,8 @@
+{
+    "packages": {
+        "bootstrapcss": {
+            "version": "1.0.1",
+            "repo": "spm-libs/bootstrap-css"
+        }
+    }
+}
