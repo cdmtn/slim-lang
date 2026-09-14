@@ -330,7 +330,8 @@ function readBalanced(src, pos, open = "{", close = "}") {
 }
 
 // Read balanced arguments after matching a construct head.
-const returnArrow = /\s*->\s*/y
+// Return type may be introduced by `->` or `:` (e.g. `func f(): number`).
+const returnArrow = /\s*(?:->|:)\s*/y
 
 function headMatcher(head, tail) {
     const headRe = new RegExp(head, "ym")

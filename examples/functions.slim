@@ -2,9 +2,19 @@ func foo() {
     log("Hello world!")
 }
 
-async async_foo() {
+async func async_foo() {
     log("Hello world from async func!")
 }
 export func exported_foo() {
     log("I'm exported!")
+}
+
+// typed functions
+
+func typed(x: int): int {
+    return x;
+}
+
+func typed_second(x: int) -> int {
+    return x;
 }
