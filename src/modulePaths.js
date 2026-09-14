@@ -1,5 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
+import { isBuiltin } from "node:module"
 
 const slimExtension = ".slim"
 
@@ -30,6 +31,10 @@ export function getDistPath(slimFile) {
 }
 
 export function resolveSlimSource(raw, fromFile) {
+    // Node builtins (e.g. "node:crypto", "fs", "path") are not Slim sources;
+    // leave them for the JS import to resolve untouched.
+    if (isBuiltin(raw)) return null
+
     if (raw.startsWith("@")) {
         const packagesRoot = path.resolve("packages")
         const packageName = raw.slice("@".length)
