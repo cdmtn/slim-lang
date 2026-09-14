@@ -38,3 +38,13 @@ test("`use` accepts single-quoted specifiers", () => {
     const { code } = transform(`use { Command } from 'commander'\nlog(1)`, fromFile)
     assert.match(code, /import\s*\{\s*Command\s*\}\s*from\s*"commander"/)
 })
+
+test("a bare `use X from` defaults to a default import", () => {
+    const { code } = transform(`use commander from "commander"\nlog(1)`, fromFile)
+    assert.match(code, /import\s+commander\s+from\s*"commander"/)
+})
+
+test('`uses: "named"` restores the legacy named-import style for a bare `use`', () => {
+    const { code } = transform(`use commander from "commander"\nlog(1)`, fromFile, { uses: "named" })
+    assert.match(code, /import\s*\{\s*commander\s*\}\s*from\s*"commander"/)
+})

@@ -1,4 +1,5 @@
 {
     "main": "path/to/your/files",
-    "usePackages": true
+    "usePackages": true,
+    "uses": "import"
 }

@@ -591,12 +591,12 @@ function structuralEdits(text) {
         collectCustom(matchMatcher, buildMatch)
 
         collect(
-            /use\s+(\*\s+as\s+[\w$]+|\{[^}]+\}|[a-zA-Z_$][\w$]*)\s+from\s+["']([^"']+)["']\s*;?/g,
+            /use\s+(\*\s+as\s+[\w$]+|\{[^}]+\}|[a-zA-Z_$][\w$]*\s+as\s+[\w$]+|[a-zA-Z_$][\w$]*)\s+from\s+["']([^"']+)["']\s*;?/g,
             (_, name, source) =>
                 `__use__(${JSON.stringify(name.trim())}, ${JSON.stringify(source)})\n`
         )
         collect(
-            /use\s+(\*\s+as\s+[\w$]+|\{[^}]+\}|[a-zA-Z_$][\w$]*)\s+from\s+(@[\w$\/.-]+)\s*;?/g,
+            /use\s+(\*\s+as\s+[\w$]+|\{[^}]+\}|[a-zA-Z_$][\w$]*\s+as\s+[\w$]+|[a-zA-Z_$][\w$]*)\s+from\s+(@[\w$\/.-]+)\s*;?/g,
             (_, name, source) =>
                 `__use__(${JSON.stringify(name.trim())}, ${JSON.stringify(source)})\n`
         )

@@ -15,6 +15,7 @@ let usePackages = true
 let jsdoc = false
 let declarations = false
 let check = true
+let useStyle = "import"
 
 function syncExternal() {
     const srcExternal = path.resolve("src/external")
@@ -54,8 +55,8 @@ function extractUses(code) {
 
     const patterns = [
         /\buse\s+(@[\w$\/.-]+)\s*;?$/gm,
-        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+(@[\w$\/.-]+)\s*;?$/gm,
-        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+["']([^"']+)["']\s*;?$/gm,
+        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+\s+as\s+[\w$]+|[\w$]+)\s+from\s+(@[\w$\/.-]+)\s*;?$/gm,
+        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+\s+as\s+[\w$]+|[\w$]+)\s+from\s+["']([^"']+)["']\s*;?$/gm,
         /\buse\s+["']([^"']+)["']\s*;?$/gm,
     ]
 
@@ -113,7 +114,7 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
         compileFile(depPath, false, mainEntry)
     }
 
-    const { code: output, declarations: dts } = transform(code, abs, { jsdoc, declarations, check })
+    const { code: output, declarations: dts } = transform(code, abs, { jsdoc, declarations, check, uses: useStyle })
 
     const outputPath = isEntry
         ? path.resolve(`dist/${mainEntry}.js`)
@@ -212,6 +213,7 @@ async function main() {
     jsdoc = data.jsdoc === true
     declarations = data.declarations === true
     check = data.check !== false && process.env.SLIM_NO_CHECK !== "1"
+    useStyle = typeof data.uses === "string" ? data.uses : "import"
 
     if (!("main" in data)) return
 

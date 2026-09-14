@@ -460,7 +460,14 @@ function usesDom(ast) {
     return found
 }
 
-function parseSpecifiers(name) {
+// `use` mirrors `import`: `use { X } from Y` is a named import, `use * as X`
+// a namespace import, and a bare `use X from Y` a default import — exactly like
+// `import X from Y`. Named exports (including Slim's `export const`/`export func`)
+// must therefore be brought in with braces: `use { X } from Y`.
+//
+// When `bareIsDefault` is false (the legacy `"uses": "named"` config style), a
+// bare `use X from Y` instead lowers to a named import `import { X } from Y`.
+function parseSpecifiers(name, bareIsDefault = true) {
     const trimmed = name.trim()
 
     const namespaceMatch = trimmed.match(/^\*\s+as\s+([\w$]+)$/)
@@ -478,7 +485,17 @@ function parseSpecifiers(name) {
         })
     }
 
-    return [t.importSpecifier(t.identifier(trimmed), t.identifier(trimmed))]
+    // `use X as Y from Z` renames a named export (there is no `import X as Y`).
+    const aliasMatch = trimmed.match(/^([\w$]+)\s+as\s+([\w$]+)$/)
+    if (aliasMatch) {
+        return [t.importSpecifier(t.identifier(aliasMatch[2]), t.identifier(aliasMatch[1]))]
+    }
+
+    if (!bareIsDefault) {
+        return [t.importSpecifier(t.identifier(trimmed), t.identifier(trimmed))]
+    }
+
+    return [t.importDefaultSpecifier(t.identifier(trimmed))]
 }
 
 function formatSyntaxError(err, originalCode, sourceFile, mapped) {
@@ -513,6 +530,9 @@ function formatSyntaxError(err, originalCode, sourceFile, mapped) {
 }
 
 export function transform(code, sourceFile = "input.ps", options = {}) {
+    // `"uses": "named"` (or "legacy") restores the old bare-import style where a
+    // bare `use X from Y` is a named import; the default mirrors `import`.
+    const bareIsDefault = options.uses !== "named" && options.uses !== "legacy"
     const asyncFunctions = new Set()
     const imports = new Map()
     const wildcards = []
@@ -623,7 +643,7 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
 
     const importedNames = new Set()
     for (const name of imports.keys()) {
-        for (const specifier of parseSpecifiers(name)) {
+        for (const specifier of parseSpecifiers(name, bareIsDefault)) {
             importedNames.add(specifier.local.name)
         }
     }
@@ -660,7 +680,7 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
     })
 
     const importNodes = [...imports.entries()].map(([name, source]) =>
-        t.importDeclaration(parseSpecifiers(name), t.stringLiteral(source))
+        t.importDeclaration(parseSpecifiers(name, bareIsDefault), t.stringLiteral(source))
     )
 
     const existingImports = ast.program.body.filter(n => t.isImportDeclaration(n))
