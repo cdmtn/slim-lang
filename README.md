@@ -1,9 +1,16 @@
 <div align="center">
-  <img width="100" height="100" alt="slimlang" src="https://github.com/user-attachments/assets/301d9a23-edff-41f2-bd2a-77e2aadd66ac" />
+  <img width="800" src="https://github.com/user-attachments/assets/29849f19-9e0f-49d0-a188-74714c14b0a4" />
   <h1>Slim</h1>
-
-  <p align="left">Slim extends JavaScript with runtime types, structs, operators, and components, compiling to plain JS.</p>
+  <h4 align="center">Slim extends JavaScript with runtime types, structs, operators, and components, compiling to plain Javascript</h4>
 </div>
+
+<div align="center">
+    <a href="https://codemotion.yurba.one/github">CodeMotion IDE</a>
+    ⋅
+    <a href="https://codemotion.yurba.one/telegram">Telegram (News on russian)</a>
+</div>
+
+<br>
 
 > [!IMPORTANT]
 > Slim is still early in development. Please report bugs in Issues and send pull requests for improvements.
