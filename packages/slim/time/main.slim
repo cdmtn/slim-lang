@@ -1,24 +1,24 @@
-export class UnixTime {
+export default class TimeHelper {
     static #convertMsToUnix(ms: int) {
         if(sizeof ms > 12) return Math.floor(ms / 1000)
         return ms
     }
-    static now() {
+    static now(): int {
         return Date.now()
     }
-    static toUnix(time: int) {
+    static toUnix(time: int): int {
         return this.#convertMsToUnix(time)
     }
     static toDate(time: int, {
         format = "{{dd}}.{{MM}}.{{yyyy}} {{hh}}:{{mm}}:{{ss}}:{{ii}}",
         ampm = false
-    } = {}) {
+    } = {}): string {
         const unix: int = this.#convertMsToUnix(time)
-        const dateNow: date = new Date(unix * 1000)
+        const dateNow: Date = new Date(unix * 1000)
 
         const pad: function = (value, len = 2) => String(value).padStart(len, "0")
 
-        let hours: int = date.getHours()
+        let hours: int = dateNow.getHours()
         let ampmSuffix: string = ""
 
         if (ampm) {
@@ -32,10 +32,10 @@ export class UnixTime {
 
         const map: object = {
             "{{d}}": dateNow.getDate(),
-            "{{dd}}": pad(date.getDate()),
+            "{{dd}}": pad(dateNow.getDate()),
 
             "{{M}}": dateNow.getMonth() + 1,
-            "{{MM}}": pad(date.getMonth() + 1),
+            "{{MM}}": pad(dateNow.getMonth() + 1),
 
             "{{yy}}": String(dateNow.getFullYear()).slice(-2),
             "{{yyyy}}": dateNow.getFullYear(),
@@ -49,7 +49,7 @@ export class UnixTime {
             "{{s}}": dateNow.getSeconds(),
             "{{ss}}": pad(dateNow.getSeconds()),
 
-            "{{i}}": date.getMilliseconds(),
+            "{{i}}": dateNow.getMilliseconds(),
             "{{ii}}": pad(dateNow.getMilliseconds(), 3),
 
             "{{ampm}}": ampmSuffix

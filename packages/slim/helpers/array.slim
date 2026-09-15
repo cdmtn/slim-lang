@@ -1,3 +1,5 @@
+use { AnyArray } from @slim/types/common
+
 const oldSort = Array.prototype.sort;
 
 Array.prototype.sort = function (compareFn) {
@@ -10,7 +12,7 @@ Array.prototype.sort = function (compareFn) {
     return oldSort.call(this);
 };
 
-func range(min: int, max: int) {
+func range(min: int, max: int): AnyArray {
     const res = []
     for (let i = min; i <= max; i++) {
         res.push(i)

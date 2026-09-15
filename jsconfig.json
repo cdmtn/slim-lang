@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "allowJs": true,
+        "checkJs": false,
+        "noEmit": true,
+        "module": "esnext",
+        "target": "es2020",
+        "moduleResolution": "bundler",
+        "strict": false,
+        "skipLibCheck": true
+    },
+    "include": [
+        "dist"
+    ]
+}
