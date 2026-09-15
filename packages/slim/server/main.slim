@@ -1,16 +1,19 @@
-import http from "http";
+use http from "http"
+use * as fs from "fs"
+use * as nodePath from "path"
 
 export type ServerInstance = typeof Server;
 
 class Server {
     constructor(port: int = 3000) {
         this.port = port;
-        this.routes = {};
+        this.routes = [];
         this.apiRoutes = {};
         this.clients = [];
+        this.staticDirs = [];
     }
 
-	page(path: string, render: function, options: object) {
+	page(path: string, render: function, options?: object) {
 		let additionalScript = ""
 		let scriptId = 0;
 
@@ -56,17 +59,54 @@ class Server {
 			});
 		}
 
-		if ("head" in options) {
-			renderTag(options.head)
-		}
-		if ("title" in options) {
-			additionalScript += `document.title = "${options.title}";`
-		}
+        if(options) {
+            if ("head" in options) {
+                const headLinks: string[] = options.head
 
-        this.get(path, (req, res) => {
+                renderTag(headLinks)
+            }
+            if ("title" in options) {
+                const title: string = options.title
+
+                additionalScript += `document.title = "${title}";`
+            }
+            if ("icon" in options) {
+                const icon: string = options.icon
+
+                additionalScript += `
+                    link = document.createElement("link");
+                    link.rel = "icon";
+                    link.href = "${icon}";
+                    document.head.appendChild(link);
+                `
+            }
+            if ("onload" in options) {
+                const onload: function = options.onload
+
+                additionalScript += `
+                    const __onload = ${String(onload)};__onload({ port: ${this.port}});
+                `
+            }
+        }
+
+        this.get(path, async (req, res, params) => {
             const isDev = process.env.SLIM_DEV === "1"
-			let html = render({ dev: isDev });
+			let html = render({ dev: isDev, params });
 			const eventsScript = __flush_events__();
+
+            if(kindof html == "promise") {
+                html = await html
+            }
+
+            if(kindof html == "object") {
+                res.writeHead(200, {
+                    "Content-Type": "text/json; charset=utf-8",
+                    "Cache-Control": "no-store"
+                });
+                res.end(JSON.stringify(html))
+
+                return
+            }
 
 			html += `<script>`
 
@@ -105,11 +145,126 @@ class Server {
     }
 
     get(path: string, callback: function) {
-        this.routes[path] = callback;
+        const compiled = this.compileRoute(path);
+        this.routes.push({ regex: compiled.regex, keys: compiled.keys, callback });
+    }
+
+    escapeRegex(str: string) {
+        const specials = ".^$*+?()[]{}|\\";
+        let out = "";
+
+        for (const ch of str) {
+            if (specials.includes(ch)) out += "\\";
+            out += ch;
+        }
+
+        return out;
+    }
+
+    compileRoute(route: string) {
+        const keys = [];
+
+        const pattern = route.split("/").map(segment => {
+            if (segment.length > 2 && segment.startsWith("{") && segment.endsWith("}")) {
+                keys.push(segment.slice(1, -1));
+                return "([^/]+)";
+            }
+
+            return this.escapeRegex(segment);
+        }).join("/");
+
+        return { regex: new RegExp("^" + pattern + "$"), keys };
+    }
+
+    contentType(file: string) {
+        const types: object = {
+            html: "text/html",
+            css: "text/css",
+            js: "text/javascript",
+            mjs: "text/javascript",
+            json: "application/json",
+            svg: "image/svg+xml",
+            png: "image/png",
+            jpg: "image/jpeg",
+            jpeg: "image/jpeg",
+            gif: "image/gif",
+            webp: "image/webp",
+            ico: "image/x-icon",
+            woff: "font/woff",
+            woff2: "font/woff2",
+            ttf: "font/ttf",
+            txt: "text/plain"
+        };
+
+        const ext = file.split(".").pop().toLowerCase();
+        const mime = types[ext] ?? "application/octet-stream";
+        const isText = mime.startsWith("text/") || mime == "application/json" || mime == "image/svg+xml";
+
+        return isText ? `${mime}; charset=utf-8` : mime;
+    }
+
+    colorStatus(status: int) {
+        const text = String(status);
+
+        if (!process.stdout.isTTY) return text;
+
+        const esc = String.fromCharCode(27);
+        let color = "32";
+
+        if (status >= 500) color = "31";
+        else if (status >= 400) color = "33";
+        else if (status >= 300) color = "36";
+
+        return `${esc}[${color}m${text}${esc}[0m`;
     }
 
     api(path: string, handler: function) {
         this.apiRoutes[path] = handler;
+    }
+
+    redirect(paths: object[]) {
+        struct RedirectRoute {
+            from: string
+            to: string
+        }
+
+        for(const path of paths) {
+            StaticRoute.verify(path)
+
+            const from = path.from
+            const to = path.to
+
+            this.get(from, async (req, res) => {
+                res.writeHead(200, {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-store"
+                });
+
+                res.end(`<script>window.location.href="${to}"</script>`);
+            })
+        }
+    }
+
+    static(paths: object[]) {
+        struct StaticRoute {
+            from: string
+            to: string
+        }
+
+        for(const path of paths) {
+            StaticRoute.verify(path)
+
+            const from = path.from
+            const to = path.to
+
+            const root = nodePath.resolve(to);
+
+            if (!fs.existsSync(root)) {
+                log(`[SlimServer] Static setup ("${from}" -> "${to}"): directory not found: ${to}`);
+            }
+
+            this.staticDirs.push({ prefix: from, dir: to });
+        }
     }
 
     start() {
@@ -132,11 +287,27 @@ class Server {
         http.createServer((req, res) => {
             const url = req.url.split("?")[0];
 
-            const route = this.routes[url];
+            if (process.env.SLIM_DEV === "1" && url != "/__slim_reload__") {
+                const started = Date.now();
 
-            if (route) {
-                route(req, res);
-                return;
+                res.on("finish", () => {
+                    const ms = Date.now() - started;
+                    log(`${req.method} ${req.url} ${this.colorStatus(res.statusCode)} in ${ms}ms`);
+                });
+            }
+
+            for (const route of this.routes) {
+                const match = url.match(route.regex);
+
+                if (match) {
+                    const params: object = {};
+                    route.keys.forEach((key, i) => {
+                        params[key] = decodeURIComponent(match[i + 1]);
+                    });
+
+                    route.callback(req, res, params);
+                    return;
+                }
             }
 
             const apiRoute = this.apiRoutes[url];
@@ -167,6 +338,35 @@ class Server {
                     }
                 });
                 return;
+            }
+
+            for (const mount of this.staticDirs) {
+                if (url == mount.prefix || url.startsWith(mount.prefix + "/")) {
+                    let relative = url.slice(mount.prefix.length);
+                    while (relative.startsWith("/")) relative = relative.slice(1);
+
+                    const root = nodePath.resolve(mount.dir);
+                    const filePath = nodePath.join(root, relative);
+
+                    if (filePath != root && !filePath.startsWith(root + nodePath.sep)) {
+                        res.writeHead(403);
+                        res.end("403");
+                        return;
+                    }
+
+                    fs.promises.readFile(filePath).then(data => {
+                        res.writeHead(200, {
+                            "Content-Type": this.contentType(filePath),
+                            "Cache-Control": "no-store"
+                        });
+                        res.end(data);
+                    }).catch(() => {
+                        res.writeHead(404);
+                        res.end("404");
+                    });
+
+                    return;
+                }
             }
 
             res.writeHead(404);
