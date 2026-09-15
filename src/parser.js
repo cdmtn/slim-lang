@@ -623,9 +623,16 @@ function structuralEdits(text) {
                     const idx = line.indexOf(":")
                     if (idx === -1) continue
 
-                    const field = line.slice(0, idx).trim()
+                    let field = line.slice(0, idx).trim()
                     let rest = line.slice(idx + 1).trim()
                     if (!field) continue
+
+                    // Optional fields may be written as `*key` or `key?`; normalize
+                    // both to the `*key` form the struct runtime understands.
+                    let optional = false
+                    if (field.startsWith("*")) { optional = true; field = field.slice(1).trim() }
+                    if (field.endsWith("?")) { optional = true; field = field.slice(0, -1).trim() }
+                    if (optional) field = "*" + field
 
                     const eq = rest.indexOf("=")
                     if (eq !== -1) {
