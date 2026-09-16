@@ -1,8 +1,26 @@
 use http from "http"
 use * as fs from "fs"
 use * as nodePath from "path"
+import process from 'node:process';
 
 export type ServerInstance = typeof Server;
+
+export struct RedirectRoute {
+    from: string
+    to: string
+}
+
+export struct StaticRoute {
+    from: string
+    to: string
+}
+
+export struct SlimServerConf {
+    port: int = 3000
+    dev: bool = false
+    redirects: object[] = [{}]
+    statics: object[] = [{}]
+}
 
 class Server {
     constructor(port: int = 3000) {
@@ -11,6 +29,37 @@ class Server {
         this.apiRoutes = {};
         this.clients = [];
         this.staticDirs = [];
+        this.dev = false;
+
+        this.#loadConfig();
+    }
+
+    #loadConfig() {
+        let configDir = process.cwd();
+        let raw: object = {};
+
+        try {
+            const slimConf = JSON.parse(fs.readFileSync(nodePath.join(process.cwd(), "slimconfig.json"), "utf8"));
+            if (slimConf.main) configDir = nodePath.dirname(nodePath.resolve(slimConf.main));
+        } catch (e) {}
+
+        try {
+            raw = JSON.parse(fs.readFileSync(nodePath.join(configDir, "slimserver.json"), "utf8"));
+        } catch (e) {}
+
+        const conf = SlimServerConf.new(raw);
+
+        this.port = conf.port;
+        this.dev = conf.dev || process.env.SLIM_DEV === "1";
+
+        this.redirect(conf.redirects);
+
+        const statics = conf.statics.map(entry => {
+            if (empty entry) return entry;
+            return { from: entry.from, to: nodePath.resolve(configDir, entry.to) };
+        });
+
+        this.static(statics);
     }
 
 	page(path: string, render: function, options?: object) {
@@ -90,7 +139,7 @@ class Server {
         }
 
         this.get(path, async (req, res, params) => {
-            const isDev = process.env.SLIM_DEV === "1"
+            const isDev = this.dev
 			let html = render({ dev: isDev, params });
 			const eventsScript = __flush_events__();
 
@@ -223,13 +272,10 @@ class Server {
     }
 
     redirect(paths: object[]) {
-        struct RedirectRoute {
-            from: string
-            to: string
-        }
-
         for(const path of paths) {
-            StaticRoute.verify(path)
+            if(empty path) continue
+
+            RedirectRoute.verify(path)
 
             const from = path.from
             const to = path.to
@@ -246,12 +292,9 @@ class Server {
     }
 
     static(paths: object[]) {
-        struct StaticRoute {
-            from: string
-            to: string
-        }
-
         for(const path of paths) {
+            if(empty path) continue
+
             StaticRoute.verify(path)
 
             const from = path.from
@@ -287,7 +330,7 @@ class Server {
         http.createServer((req, res) => {
             const url = req.url.split("?")[0];
 
-            if (process.env.SLIM_DEV === "1" && url != "/__slim_reload__") {
+            if (this.dev && url != "/__slim_reload__") {
                 const started = Date.now();
 
                 res.on("finish", () => {

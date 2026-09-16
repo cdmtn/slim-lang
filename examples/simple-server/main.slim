@@ -1,0 +1,27 @@
+use * as core from @slim
+
+use { Server, ServerInstance } from @slim/server
+use { replaceBackslashes } from @slim/helpers/path
+
+use { Wrapper, Main } from "./components/main-page-components"
+use { PUBLIC_PATH } from "./paths"
+
+use { ServerSettings } from "./structures"
+
+const server: ServerInstance = new Server()
+
+let serverSettings: ServerSettings = {
+    head: [
+        `${PUBLIC_PATH}/main.css`
+    ],
+    icon: `${PUBLIC_PATH}/media/icon.png`,
+    title: "Slim"
+}
+
+server.page("/", async () => {
+    const version = await core.getVersion()
+
+    return Wrapper({ child: Main({ version: version }) })
+}, serverSettings)
+
+server.start()

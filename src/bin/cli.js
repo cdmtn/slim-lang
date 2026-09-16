@@ -35,6 +35,18 @@ function slimConfigRead() {
 
     return JSON.parse(fs.readFileSync(slimConfigPath, "utf8"));
 }
+// slimserver.json lives next to the entry file named by slimconfig's "main".
+function serverConfigRead() {
+    try {
+        const config = JSON.parse(fs.readFileSync(slimConfigPath, "utf8"))
+        if (!config.main) return {}
+
+        const dir = path.dirname(path.resolve(config.main))
+        return JSON.parse(fs.readFileSync(path.join(dir, "slimserver.json"), "utf8"))
+    } catch {
+        return {}
+    }
+}
 function packageCheck() {
     if (!fs.existsSync(packagePath)) {
         error(`package.json was not found in the root folder of the directory`)
@@ -68,14 +80,16 @@ program
     .command("run")
     .description("Build and run a Slim project")
     .option("-S, --silent", "Run without log")
+    .option("-D, --dev", "Run with dev features enabled (SLIM_DEV)")
     .option("-R, --release", "Run without runtime type checks")
     .option("--no-check", "Run without static type checking")
     .action((params) => {
         slimConfigCheck()
 
         if(params.release) process.env.SLIM_RELEASE = "1"
+        if(params.dev) process.env.SLIM_DEV = "1"
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
-        if(!params.silent) log("Building and running...")
+        if(!params.silent) log(params.dev ? "Building and running (dev)..." : "Building and running...")
         execSync("node src/compile.js && node run-slim.js", { stdio: "inherit" });
     });
 
@@ -115,18 +129,25 @@ program
 
 program
     .command("server")
-    .description("Compile and run a Slim server")
-    .option("-H, --hot", "Run server with hot reload")
+    .description("Run a Slim server (prod by default; --dev for watch + live reload)")
+    .option("-D, --dev", "Dev mode: watch, rebuild, live reload, request logs")
+    .option("-H, --hot", "Dev mode with hot reload")
     .option("-R, --release", "Run without runtime type checks")
-    .action((hot) => {
-        log("Compiling and running server...")
+    .action((params) => {
+        slimConfigCheck()
 
-        if(hot["release"]) process.env.SLIM_RELEASE = "1"
-        if(hot["hot"]) {
-            execSync("node run-dev-slim.js --hot", { stdio: "inherit" });
+        // Dev is on when requested on the CLI or set in slimserver.json ("dev": true).
+        const dev = Boolean(params.dev || params.hot || serverConfigRead().dev === true)
+
+        if(params.release) process.env.SLIM_RELEASE = "1"
+
+        if(dev) {
+            log("Starting Slim dev server (watch + live reload)...")
+            execSync(`node run-dev-slim.js${params.hot ? " --hot" : ""}`, { stdio: "inherit" });
         }
         else {
-            execSync("node run-dev-slim.js", { stdio: "inherit" });
+            log("Starting Slim server...")
+            execSync("node src/compile.js && node run-slim.js", { stdio: "inherit" });
         }
     });
 
@@ -208,6 +229,7 @@ program
     .command("create")
     .description("Workspace creating")
     .option("--cfg, --config", "Create config")
+    .option("--srv, --server", "Create a slimserver.json next to the entry file")
     .option("--file <name>", "Create file")
     .action((params) => {
         if(params.config) {
@@ -218,6 +240,29 @@ program
                 error('An error occurred while creating config:', err);
             }
         }
+        if(params.server) {
+            try {
+                const config = slimConfigRead()
+                const dir = config.main ? path.dirname(path.resolve(config.main)) : root
+                const serverConfigPath = path.join(dir, "slimserver.json")
+
+                if(fs.existsSync(serverConfigPath)) {
+                    log(`slimserver.json already exists at ${path.relative(root, serverConfigPath)}, leaving it untouched`)
+                }
+                else {
+                    const template = {
+                        port: 3000,
+                        dev: false,
+                        statics: [{ from: "/public", to: "./public" }],
+                        redirects: [{ from: "/github", to: "https://example.com" }]
+                    }
+                    fs.writeFileSync(serverConfigPath, JSON.stringify(template, null, 4) + "\n", 'utf8')
+                    log(`Created ${path.relative(root, serverConfigPath)}`)
+                }
+            } catch (err) {
+                error('An error occurred while creating slimserver.json:', err);
+            }
+        }
         if(params.file) {
             try {
                 fs.writeFileSync(params.file + ".slim", "", 'utf8');
@@ -226,7 +271,7 @@ program
                 error('An error occurred while creating file:', err);
             }
         }
-        if(!params.config && !params.file) {
+        if(!params.config && !params.server && !params.file) {
             log(
 `Please use the following arguments to create files:
     ${program.name()} help create

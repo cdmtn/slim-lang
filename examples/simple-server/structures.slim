@@ -1,0 +1,17 @@
+use { SemVer } from @slim/types/formats
+
+export struct CWrapper {
+    child: fragment
+}
+export struct CMain {
+    version: SemVer
+}
+export struct CLogo {
+    src: string
+}
+export struct ServerSettings {
+    head?: string[]
+    icon?: string
+    title?: string,
+    onload?: function
+}
