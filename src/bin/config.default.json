@@ -2,5 +2,6 @@
     "main": "path/to/your/files",
     "usePackages": true,
     "uses": "import",
-    "packages": "packages"
+    "packages": "packages",
+    "dist": "slim-dist"
 }

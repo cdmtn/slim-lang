@@ -12,7 +12,8 @@ const config = JSON.parse(
     fs.readFileSync("slimconfig.json", "utf8")
 );
 
-const entry = `dist/${config.main}.js`;
+const distDir = typeof config.dist === "string" && config.dist.trim() ? config.dist : "slim-dist";
+const entry = `${distDir}/${config.main}.js`;
 const hot = process.argv.includes("--hot");
 
 let app = null;
@@ -114,6 +115,7 @@ async function rebuild() {
 await rebuild();
 
 const watchTarget = config.watch ?? ".";
+const ignoreDirs = new RegExp(`(^|[\\\\/])(node_modules|${distDir}|\\.git)([\\\\/]|$)`);
 
 const watcher = chokidar.watch(watchTarget, {
     ignoreInitial: true,
@@ -121,7 +123,7 @@ const watcher = chokidar.watch(watchTarget, {
         stabilityThreshold: 150,
         pollInterval: 50
     },
-    ignored: p => /(^|[\\/])(node_modules|dist|\.git)([\\/]|$)/.test(p)
+    ignored: p => ignoreDirs.test(p)
 });
 
 watcher.on("all", (_, file) => {

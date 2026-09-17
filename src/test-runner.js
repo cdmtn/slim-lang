@@ -3,10 +3,11 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { pathToFileURL } from "node:url"
 import { transform } from "./transform.js"
+import { distDirName } from "./modulePaths.js"
 
 const root = process.cwd()
 const runtimeImport = pathToFileURL(path.resolve("src/external/defaults.js")).href
-const outDir = path.resolve("dist/__slim_tests__")
+const outDir = path.resolve(distDirName(), "__slim_tests__")
 
 function findTests(target) {
     if (target) {
@@ -19,7 +20,7 @@ function findTests(target) {
         if (!fs.existsSync(dir)) return
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             if (entry.isDirectory()) {
-                if (entry.name !== "node_modules" && entry.name !== "dist" && entry.name !== ".git") {
+                if (entry.name !== "node_modules" && entry.name !== distDirName() && entry.name !== ".git") {
                     walk(path.join(dir, entry.name))
                 }
             } else if (entry.name.endsWith(".test.slim")) {

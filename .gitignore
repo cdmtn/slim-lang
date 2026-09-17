@@ -2,6 +2,7 @@ slimconfig.json
 struct.slim
 test.slim
 dist/
+slim-dist/
 node_modules
 local/
 todo.md

@@ -7,18 +7,30 @@ const slimExtension = ".slim"
 
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
+function readConfig() {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(process.cwd(), "slimconfig.json"), "utf8"))
+    } catch {
+        return {}
+    }
+}
+
 let projectPackagesCache = null
 export function projectPackagesDir() {
     if (projectPackagesCache) return projectPackagesCache
 
-    let dir = "packages"
-    try {
-        const config = JSON.parse(fs.readFileSync(path.join(process.cwd(), "slimconfig.json"), "utf8"))
-        if (typeof config.packages === "string" && config.packages.trim()) dir = config.packages
-    } catch {}
-
-    projectPackagesCache = path.resolve(dir)
+    const dir = readConfig().packages
+    projectPackagesCache = path.resolve(typeof dir === "string" && dir.trim() ? dir : "packages")
     return projectPackagesCache
+}
+
+let distDirCache = null
+export function distDirName() {
+    if (distDirCache) return distDirCache
+
+    const dir = readConfig().dist
+    distDirCache = typeof dir === "string" && dir.trim() ? dir : "slim-dist"
+    return distDirCache
 }
 
 function packageRoots() {
@@ -63,11 +75,12 @@ export function getDistPath(slimFile) {
     } else if (isWithin(projectRoot, abs)) {
         relative = path.relative(projectRoot, abs)
     } else {
+        // Drop leading "../" so out-of-project sources can't escape the dist dir.
         const stripped = path.relative(projectRoot, abs).split(path.sep).filter(seg => seg !== "..")
         relative = stripped.length ? path.join(...stripped) : path.basename(abs)
     }
 
-    return path.resolve("dist", relative.replace(/\.slim$/, ".js"))
+    return path.resolve(distDirName(), relative.replace(/\.slim$/, ".js"))
 }
 
 export function resolveSlimSource(raw, fromFile) {

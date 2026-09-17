@@ -7,7 +7,7 @@ import { readFile } from 'fs/promises';
 import { Debug } from "./external/core.js";
 import { stripComments } from "./parser.js";
 import { UseError } from "./external/classErrors.js";
-import { getDistPath, resolveSlimSource, PACKAGE_ROOT } from "./modulePaths.js";
+import { getDistPath, resolveSlimSource, PACKAGE_ROOT, distDirName } from "./modulePaths.js";
 
 const compiled = new Set()
 
@@ -19,7 +19,7 @@ let useStyle = "import"
 
 function syncExternal() {
     const srcExternal = path.join(PACKAGE_ROOT, "src/external")
-    const distExternal = path.resolve("dist/external")
+    const distExternal = path.resolve(distDirName(), "external")
 
     if (!fs.existsSync(srcExternal)) return
 
@@ -117,7 +117,7 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
     const { code: output, declarations: dts } = transform(code, abs, { jsdoc, declarations, check, uses: useStyle })
 
     const outputPath = isEntry
-        ? path.resolve(`dist/${mainEntry}.js`)
+        ? path.resolve(distDirName(), `${mainEntry}.js`)
         : getDistPath(abs)
 
     fs.mkdirSync(path.dirname(outputPath), { recursive: true })
@@ -128,8 +128,8 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
 
 function cleanDist(slimFileClear) {
     const keep = new Set([
-        path.resolve(`dist/${slimFileClear}.js`),
-        path.resolve("dist/mappings.json"),
+        path.resolve(distDirName(), `${slimFileClear}.js`),
+        path.resolve(distDirName(), "mappings.json"),
     ])
 
     function addDirToKeep(dir) {
@@ -140,11 +140,11 @@ function cleanDist(slimFileClear) {
             if (entry.isDirectory()) addDirToKeep(full)
         }
     }
-    addDirToKeep(path.resolve("dist/external"))
+    addDirToKeep(path.resolve(distDirName(), "external"))
 
     for (const slimFile of compiled) {
         if (slimFile === path.resolve(`${slimFileClear}.slim`)) {
-            keep.add(path.resolve(`dist/${slimFileClear}.js`))
+            keep.add(path.resolve(distDirName(), `${slimFileClear}.js`))
         } else {
             keep.add(getDistPath(slimFile))
         }
@@ -173,7 +173,7 @@ function cleanDist(slimFileClear) {
         }
     }
 
-    walkAndClean(path.resolve("dist"))
+    walkAndClean(path.resolve(distDirName()))
 }
 
 function writeJsConfig() {
@@ -191,7 +191,7 @@ function writeJsConfig() {
             strict: false,
             skipLibCheck: true
         },
-        include: ["dist"]
+        include: [distDirName()]
     }
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 4) + "\n")

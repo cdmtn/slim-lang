@@ -7,7 +7,7 @@ import { emitJsDoc, emitDeclarations, jsdocComment } from "./jsdoc.js"
 import { checkTypes, formatDiagnostics } from "./checker.js"
 import * as t from "@babel/types"
 import path from "node:path"
-import { getDistPath, resolveSlimImport, resolveSlimSource } from "./modulePaths.js"
+import { getDistPath, resolveSlimImport, resolveSlimSource, distDirName } from "./modulePaths.js"
 import {
     PRE_SOURCE,
     buildPreMap,
@@ -430,7 +430,7 @@ function resolvePath(raw, fromFile) {
 
 function getRuntimePath(sourceFile, entry) {
     const distFile = getDistPath(sourceFile)
-    const runtimeAbs = path.resolve(`dist/external/${entry}`)
+    const runtimeAbs = path.resolve(distDirName(), "external", entry)
     const rel = path.relative(path.dirname(distFile), runtimeAbs)
     const relFixed = rel.replace(/\\/g, "/")
     return relFixed.startsWith(".") ? relFixed : "./" + relFixed
