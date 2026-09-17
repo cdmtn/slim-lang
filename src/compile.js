@@ -7,7 +7,7 @@ import { readFile } from 'fs/promises';
 import { Debug } from "./external/core.js";
 import { stripComments } from "./parser.js";
 import { UseError } from "./external/classErrors.js";
-import { getDistPath, resolveSlimSource } from "./modulePaths.js";
+import { getDistPath, resolveSlimSource, PACKAGE_ROOT } from "./modulePaths.js";
 
 const compiled = new Set()
 
@@ -18,7 +18,9 @@ let check = true
 let useStyle = "import"
 
 function syncExternal() {
-    const srcExternal = path.resolve("src/external")
+    // The runtime ships inside the package; the compiled output goes to the
+    // project's own dist/ (so this works both locally and when installed).
+    const srcExternal = path.join(PACKAGE_ROOT, "src/external")
     const distExternal = path.resolve("dist/external")
 
     if (!fs.existsSync(srcExternal)) return

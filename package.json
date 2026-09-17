@@ -1,7 +1,7 @@
 {
-	"name": "slim",
-	"version": "1.2.0",
-	"description": "",
+	"name": "@slim-lang/core",
+	"version": "1.2.1",
+	"description": "Slim extends JavaScript with runtime types, structs, operators, and components, compiling to plain Javascript",
 	"main": "index.js",
 	"type": "module",
 	"repository": {
@@ -12,8 +12,18 @@
 		"slim:build": "node src/compile.js",
 		"slim": "node src/compile.js && node run-slim.js",
 		"slim:server": "node run-dev-slim.js",
+		"release:patch": "npm version patch && git push --follow-tags && npm publish",
+		"release:minor": "npm version minor && git push --follow-tags && npm publish",
+		"release:major": "npm version major && git push --follow-tags && npm publish",
 		"test": "node --test"
 	},
+	"files": [
+		"packages",
+		"src",
+		"run-dev-slim.js",
+		"run-slim.js",
+		"README.md"
+	],
 	"bin": {
 		"slmc": "./src/bin/cli.js",
 		"spm": "./src/bin/spm.js"

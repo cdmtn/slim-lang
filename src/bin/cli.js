@@ -5,6 +5,7 @@ import { execSync } from "child_process";
 import { readFile } from 'node:fs/promises';
 import path from "node:path"
 import fs from "node:fs"
+import { fileURLToPath } from "node:url"
 
 import { log, error, parseValue } from "./helpers.js"
 import { runTests } from "../test-runner.js"
@@ -14,6 +15,14 @@ import pkg from "../../package.json" with { type: "json" };
 import defaultConfig from "./config.default.json" with { type: "json" };
 
 const root = process.cwd()
+// Toolchain scripts (compiler, runners) live inside the package, which is only
+// the same as the project root during local development. Resolve them from this
+// file's location so the commands work when installed from npm too.
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const compileScript = JSON.stringify(path.join(packageRoot, "src", "compile.js"))
+const runScript = JSON.stringify(path.join(packageRoot, "run-slim.js"))
+const devScript = JSON.stringify(path.join(packageRoot, "run-dev-slim.js"))
+
 const program = new Command();
 const slimConfigPath = path.join(root, "slimconfig.json")
 const packagePath = path.join(root, "package.json")
@@ -72,7 +81,7 @@ program
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
 
         if(!params.silent) log("Building...")
-        execSync("node src/compile.js", { stdio: "inherit" });
+        execSync(`node ${compileScript}`, { stdio: "inherit" });
         if(!params.silent) log("Ready!")
     });
 
@@ -90,7 +99,7 @@ program
         if(params.dev) process.env.SLIM_DEV = "1"
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
         if(!params.silent) log(params.dev ? "Building and running (dev)..." : "Building and running...")
-        execSync("node src/compile.js && node run-slim.js", { stdio: "inherit" });
+        execSync(`node ${compileScript} && node ${runScript}`, { stdio: "inherit" });
     });
 
 program
@@ -143,11 +152,11 @@ program
 
         if(dev) {
             log("Starting Slim dev server (watch + live reload)...")
-            execSync(`node run-dev-slim.js${params.hot ? " --hot" : ""}`, { stdio: "inherit" });
+            execSync(`node ${devScript}${params.hot ? " --hot" : ""}`, { stdio: "inherit" });
         }
         else {
             log("Starting Slim server...")
-            execSync("node src/compile.js && node run-slim.js", { stdio: "inherit" });
+            execSync(`node ${compileScript} && node ${runScript}`, { stdio: "inherit" });
         }
     });
 

@@ -1,6 +1,12 @@
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import chokidar from "chokidar";
 import { spawn } from "child_process";
+
+// This script ships in the package; the compiler sits next to it there.
+const packageRoot = path.dirname(fileURLToPath(import.meta.url));
+const compileScript = path.join(packageRoot, "src", "compile.js");
 
 const config = JSON.parse(
     fs.readFileSync("slimconfig.json", "utf8")
@@ -68,7 +74,7 @@ function stop() {
 
 function compile() {
     return new Promise(resolve => {
-        const compiler = spawn("node", ["src/compile.js"], {
+        const compiler = spawn("node", [compileScript], {
             stdio: "inherit"
         });
 

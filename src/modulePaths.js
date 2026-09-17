@@ -1,8 +1,26 @@
 import fs from "node:fs"
 import path from "node:path"
 import { isBuiltin } from "node:module"
+import { fileURLToPath } from "node:url"
 
 const slimExtension = ".slim"
+
+// Root of the installed toolchain package (…/src/modulePaths.js -> package root).
+// Locally this equals the project root; when installed it points into
+// node_modules/@slim-lang/core, where the shipped stdlib (@slim/*) lives.
+export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+
+// `@`-imports resolve against the project's own packages/ (spm installs) first,
+// then the stdlib shipped inside the package. When run locally the two are the
+// same directory.
+function packageRoots() {
+    const projectPackages = path.resolve("packages")
+    const shippedPackages = path.join(PACKAGE_ROOT, "packages")
+
+    return projectPackages === shippedPackages
+        ? [projectPackages]
+        : [projectPackages, shippedPackages]
+}
 
 function isWithin(parent, target) {
     const relative = path.relative(parent, target)
@@ -36,18 +54,22 @@ export function resolveSlimSource(raw, fromFile) {
     if (isBuiltin(raw)) return null
 
     if (raw.startsWith("@")) {
-        const packagesRoot = path.resolve("packages")
         const packageName = raw.slice("@".length)
-        const fileSource = path.resolve(packagesRoot, packageName + slimExtension)
+        const roots = packageRoots()
 
-        if (fs.existsSync(fileSource)) return fileSource
+        for (const packagesRoot of roots) {
+            const fileSource = path.join(packagesRoot, packageName + slimExtension)
+            if (fs.existsSync(fileSource)) return fileSource
 
-        const directorySource = path.resolve(packagesRoot, packageName, "main.slim")
-        if (fs.existsSync(directorySource)) return directorySource
+            const directorySource = path.join(packagesRoot, packageName, "main.slim")
+            if (fs.existsSync(directorySource)) return directorySource
+        }
 
         if (isNodeModule(raw)) return null
 
-        return fileSource
+        // Not found in any root: return the project-local path so errors point
+        // at the user's own packages/ directory.
+        return path.join(roots[0], packageName + slimExtension)
     }
 
     if (raw.endsWith(".js")) return null
