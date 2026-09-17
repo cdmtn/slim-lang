@@ -49,9 +49,23 @@ export function getDistPath(slimFile) {
     const abs = path.resolve(slimFile)
     const srcRoot = path.resolve("src")
     const projectRoot = path.resolve(".")
-    const relative = isWithin(srcRoot, abs)
-        ? path.relative(srcRoot, abs)
-        : path.relative(projectRoot, abs)
+    const shippedPackages = path.join(PACKAGE_ROOT, "packages")
+    const projectPackages = projectPackagesDir()
+
+    let relative
+
+    if (isWithin(shippedPackages, abs)) {
+        relative = path.join("packages", path.relative(shippedPackages, abs))
+    } else if (isWithin(projectPackages, abs)) {
+        relative = path.join(path.basename(projectPackages), path.relative(projectPackages, abs))
+    } else if (isWithin(srcRoot, abs)) {
+        relative = path.relative(srcRoot, abs)
+    } else if (isWithin(projectRoot, abs)) {
+        relative = path.relative(projectRoot, abs)
+    } else {
+        const stripped = path.relative(projectRoot, abs).split(path.sep).filter(seg => seg !== "..")
+        relative = stripped.length ? path.join(...stripped) : path.basename(abs)
+    }
 
     return path.resolve("dist", relative.replace(/\.slim$/, ".js"))
 }
