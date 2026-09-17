@@ -43,7 +43,6 @@ function wordOperatorEdits(code) {
     for (const token of tokenize(code)) {
         if (token.type === "ws" || token.type === "newline" || token.type === "comment") continue
 
-        // Lower word operators only after an operand.
         const replacement = token.type === "name" ? replacements[token.value] : undefined
         if (replacement && endsExpression(prev)) {
             edits.push({ start: token.start, end: token.end, replacement })
@@ -290,7 +289,6 @@ function functionEdits(text) {
     })
 }
 
-// Cache tokens for whole-file and extracted-body scans.
 const tokenCache = new Map()
 
 function tokensFor(src) {
@@ -309,7 +307,6 @@ function tokensFor(src) {
     return entry
 }
 
-// Match brackets by tokens so literals and comments do not affect depth.
 function readBalanced(src, pos, open = "{", close = "}") {
     const { tokens, starts } = tokensFor(src)
     let index = starts.get(pos)
@@ -329,8 +326,6 @@ function readBalanced(src, pos, open = "{", close = "}") {
     return -1
 }
 
-// Read balanced arguments after matching a construct head.
-// Return type may be introduced by `->` or `:` (e.g. `func f(): number`).
 const returnArrow = /\s*(?:->|:)\s*/y
 
 function headMatcher(head, tail) {
@@ -462,7 +457,6 @@ function topLevelWhen(str) {
     return -1
 }
 
-// Recursively lower nested match expressions without touching strings.
 function lowerMatches(str) {
     if (!str.includes("match")) return str
 
@@ -627,8 +621,6 @@ function structuralEdits(text) {
                     let rest = line.slice(idx + 1).trim()
                     if (!field) continue
 
-                    // Optional fields may be written as `*key` or `key?`; normalize
-                    // both to the `*key` form the struct runtime understands.
                     let optional = false
                     if (field.startsWith("*")) { optional = true; field = field.slice(1).trim() }
                     if (field.endsWith("?")) { optional = true; field = field.slice(0, -1).trim() }
@@ -688,8 +680,6 @@ function structuralEdits(text) {
                 const head = declarationHead.exec(src)
                 if (!head) return null
 
-                // `export default const X: T = ...` is not valid JS as a single
-                // statement; lower it to a typed declaration plus `export default X`.
                 const leadingDefault = src.slice(0, i).match(/export\s+default\s+$/)
                 const start = leadingDefault ? i - leadingDefault[0].length : i
 
@@ -708,10 +698,6 @@ function structuralEdits(text) {
             },
             ({ keyword, name, type, expr, exprStart, defaultExport }) => {
                 const pattern = name.startsWith("{") || name.startsWith("[")
-                // Keep the declaration exported so the module wrapper leaves it at
-                // top level, then re-export the binding as default. Emitting a bare
-                // `const` plus `export default X` would trap the `const` in the
-                // module's try/catch, leaving the default export undefined.
                 const prefix = defaultExport ? "export " : ""
                 const head = pattern
                     ? `${prefix}${keyword} ${name} = __typed_pattern__(`
@@ -730,7 +716,6 @@ function structuralEdits(text) {
             /(\w[\w$.]*(?:\[.*?\])?)\s*(?:=>\s*([\w$]+))?\s*\n((?:\s*\|(?!\|)[^\n]+\n?)+)/g,
             (match, source, alias, pipes) => {
                 const steps = [...pipes.matchAll(/\|\s*([\w$]+)\(([^)]*)\)/g)]
-                // Preserve non-pipe bars, such as multiline union types.
                 if (steps.length === 0) return match
 
                 const callbackMethods = new Set([

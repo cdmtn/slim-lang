@@ -5,8 +5,6 @@ import { computeLineStarts, offsetToLineCol } from "./sourcemap.js"
 
 const traverse = _traverse.default ?? _traverse
 
-// Check annotations before lowering; report only definite type conflicts.
-
 const NUMERIC = new Set(["int", "float", "number"])
 const KNOWN = new Set([
     "int", "float", "number", "string", "bool", "null", "undefined",
@@ -87,7 +85,6 @@ function normalize(label) {
     return trimmed
 }
 
-// Resolve inherited fields so structs can cross module boundaries.
 function resolveStruct(name, env, seen = new Set()) {
     const definition = env.structs.get(name)
     if (!definition) return null
@@ -135,7 +132,6 @@ export function createEnvironment() {
     }
 }
 
-// Module declarations keyed by absolute source path.
 const moduleTypes = new Map()
 
 function signatureFor(name, path_, env) {
@@ -149,7 +145,7 @@ const BUILTIN_CLASSES = new Set(["Map", "Set", "Date", "Promise", "RegExp", "Err
 function isOpen(label, env) {
     const base = baseName(label)
     if (!base) return true
-    // Custom validators shadow built-ins and cannot be evaluated statically.
+
     if (env.customTypes.has(base)) return true
     if (KNOWN.has(base) || BUILTIN_CLASSES.has(base)) return false
     if (env.structs.has(base) || env.enums.has(base)) return false
@@ -217,7 +213,6 @@ function acceptsAtom(target, source, env) {
     return false
 }
 
-// A union needs one compatible arm; array literals need every element to fit.
 export function accepts(target, source, env, requireAll = false) {
     if (!target || !source) return true
 
@@ -598,7 +593,6 @@ function checkStructLiteral(structName, node, path_, env, report) {
     }
 }
 
-// Inspect lowered match expressions to preserve exhaustiveness checks.
 function matchExpression(node) {
     if (!t.isCallExpression(node) || node.arguments.length !== 1) return null
 
@@ -839,7 +833,6 @@ function buildModuleTypes(ast, env) {
     return record
 }
 
-// Import known declarations; unresolved modules remain unchecked.
 function seedImports(env, imports, wildcards) {
     const merge = (record, name, local) => {
         if (record.structs.has(name)) env.structs.set(local, record.structs.get(name))
@@ -850,7 +843,6 @@ function seedImports(env, imports, wildcards) {
 
     const sources = new Set([...wildcards, ...imports.map(entry => entry.source)])
 
-    // Local declarations override explicit and transitive imports.
     for (const source of sources) {
         const record = moduleTypes.get(source)
         if (!record) continue

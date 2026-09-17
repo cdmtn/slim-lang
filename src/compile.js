@@ -18,8 +18,6 @@ let check = true
 let useStyle = "import"
 
 function syncExternal() {
-    // The runtime ships inside the package; the compiled output goes to the
-    // project's own dist/ (so this works both locally and when installed).
     const srcExternal = path.join(PACKAGE_ROOT, "src/external")
     const distExternal = path.resolve("dist/external")
 

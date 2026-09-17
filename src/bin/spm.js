@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import { formatError, formatBold, formatItalic, formatSuccess, createFolder, createFile } from "./helpers.js"
 import pkg from "../../package.json" with { type: "json" };
-import { log, isPackageExists, rootPath, deleteDirectory, loading, delay } from "./helpers.js";
+import { log, isPackageExists, rootPath, deleteDirectory, loading, delay, projectPackagesDir } from "./helpers.js";
 
 import fs from "node:fs"
 import path from "node:path"
@@ -27,7 +27,7 @@ function errlog(...args) {
 	console.log(formatError(...args))
 }
 
-const packagesPath = path.join(rootPath, "packages")
+const packagesPath = projectPackagesDir()
 
 function renderObject(obj, indent = 0) {
     let output = "";
@@ -73,7 +73,7 @@ spm
 spm
     .command("list")
 	.action(() => {
-		const targetDir = path.join(rootPath, "packages")
+		const targetDir = packagesPath
 		if (!fs.existsSync(targetDir)) {
 			spmlog("No packages installed (the packages/ directory does not exist)")
 			return
@@ -186,7 +186,7 @@ spm
 					}
 				}
 
-				const res = await deleteDirectory(path.join(rootPath, "packages", name))
+				const res = await deleteDirectory(path.join(packagesPath, name))
 
 				if (res) {
 					removeLockEntry(name)
@@ -257,7 +257,7 @@ spm
 			await loading({
 				startMsg: `Creating path for ${name}`,
 				callback: async ({ fail, ok }) => {
-					const packagePath = path.join(rootPath, "packages", name)
+					const packagePath = path.join(packagesPath, name)
 
 					if (isExists) return fail("Package is already exists")
 					else {
@@ -336,7 +336,7 @@ spm
 			const githubRepo = SPMContent.github.repo
 			const version = SPMContent.version
 			const description = SPMContent.description
-			const packagePath = path.join("packages", name)
+			const packagePath = path.join(packagesPath, name)
 
 			if ("github" in SPMContent && "repo" in SPMContent.github) {
 				await loading({
@@ -445,7 +445,7 @@ spm
 				spmlog(formatError("No GitHub repository specified"));
 			}
 		} else {
-			spmlog(formatError(`No package founded: /packages/${name}`));
+			spmlog(formatError(`No package founded: ${path.relative(process.cwd(), path.join(packagesPath, name)) || name}`));
 		}
 	});
 

@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { rm, mkdir } from 'node:fs/promises';
 import chalk from "chalk";
+import { projectPackagesDir } from "../modulePaths.js";
+
+export { projectPackagesDir };
 
 export const formatError = chalk.red.bold
 export const formatSuccess = chalk.green.bold
@@ -30,10 +33,10 @@ export function error(...text) {
 }
 
 export function isPackageExists(name) {
-	return fs.existsSync(path.join(rootPath, "packages", name))
+	return fs.existsSync(path.join(projectPackagesDir(), name))
 }
 export function getPackagePath(name) {
-	return path.join(rootPath, "packages", name)
+	return path.join(projectPackagesDir(), name)
 }
 
 export async function deleteDirectory(dirPath) {

@@ -5,16 +5,24 @@ import { fileURLToPath } from "node:url"
 
 const slimExtension = ".slim"
 
-// Root of the installed toolchain package (…/src/modulePaths.js -> package root).
-// Locally this equals the project root; when installed it points into
-// node_modules/@slim-lang/core, where the shipped stdlib (@slim/*) lives.
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
-// `@`-imports resolve against the project's own packages/ (spm installs) first,
-// then the stdlib shipped inside the package. When run locally the two are the
-// same directory.
+let projectPackagesCache = null
+export function projectPackagesDir() {
+    if (projectPackagesCache) return projectPackagesCache
+
+    let dir = "packages"
+    try {
+        const config = JSON.parse(fs.readFileSync(path.join(process.cwd(), "slimconfig.json"), "utf8"))
+        if (typeof config.packages === "string" && config.packages.trim()) dir = config.packages
+    } catch {}
+
+    projectPackagesCache = path.resolve(dir)
+    return projectPackagesCache
+}
+
 function packageRoots() {
-    const projectPackages = path.resolve("packages")
+    const projectPackages = projectPackagesDir()
     const shippedPackages = path.join(PACKAGE_ROOT, "packages")
 
     return projectPackages === shippedPackages
@@ -49,8 +57,6 @@ export function getDistPath(slimFile) {
 }
 
 export function resolveSlimSource(raw, fromFile) {
-    // Node builtins (e.g. "node:crypto", "fs", "path") are not Slim sources;
-    // leave them for the JS import to resolve untouched.
     if (isBuiltin(raw)) return null
 
     if (raw.startsWith("@")) {
@@ -67,8 +73,6 @@ export function resolveSlimSource(raw, fromFile) {
 
         if (isNodeModule(raw)) return null
 
-        // Not found in any root: return the project-local path so errors point
-        // at the user's own packages/ directory.
         return path.join(roots[0], packageName + slimExtension)
     }
 

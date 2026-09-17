@@ -28,9 +28,6 @@ function getTypeReferenceName(typeText) {
     return withoutGeneric.split("::")[0]
 }
 
-// Builtin type names are always matched by label; they must never be resolved
-// through a same-named binding in scope (e.g. a `const string` variable would
-// otherwise shadow the primitive `string` type).
 const BUILTIN_TYPE_NAMES = new Set([
     "int", "float", "number", "string", "bool", "null", "undefined",
     "object", "array", "function", "any", "element"
@@ -439,7 +436,6 @@ function getRuntimePath(sourceFile, entry) {
     return relFixed.startsWith(".") ? relFixed : "./" + relFixed
 }
 
-// DOM globals select the full runtime; pure code uses the portable core.
 const DOM_RUNTIME = new Set([
     "htmlToVdom", "HTMLElement", "__html__",
     "__flush_events__", "__bind_events__", "__lifecycle__",
@@ -460,13 +456,6 @@ function usesDom(ast) {
     return found
 }
 
-// `use` mirrors `import`: `use { X } from Y` is a named import, `use * as X`
-// a namespace import, and a bare `use X from Y` a default import — exactly like
-// `import X from Y`. Named exports (including Slim's `export const`/`export func`)
-// must therefore be brought in with braces: `use { X } from Y`.
-//
-// When `bareIsDefault` is false (the legacy `"uses": "named"` config style), a
-// bare `use X from Y` instead lowers to a named import `import { X } from Y`.
 function parseSpecifiers(name, bareIsDefault = true) {
     const trimmed = name.trim()
 
@@ -485,7 +474,6 @@ function parseSpecifiers(name, bareIsDefault = true) {
         })
     }
 
-    // `use X as Y from Z` renames a named export (there is no `import X as Y`).
     const aliasMatch = trimmed.match(/^([\w$]+)\s+as\s+([\w$]+)$/)
     if (aliasMatch) {
         return [t.importSpecifier(t.identifier(aliasMatch[2]), t.identifier(aliasMatch[1]))]
@@ -530,8 +518,6 @@ function formatSyntaxError(err, originalCode, sourceFile, mapped) {
 }
 
 export function transform(code, sourceFile = "input.ps", options = {}) {
-    // `"uses": "named"` (or "legacy") restores the old bare-import style where a
-    // bare `use X from Y` is a named import; the default mirrors `import`.
     const bareIsDefault = options.uses !== "named" && options.uses !== "legacy"
     const asyncFunctions = new Set()
     const imports = new Map()
@@ -601,7 +587,6 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
         }
     })
 
-    // Check annotations before lowering or writing output.
     if (options.check !== false) {
         const moduleImports = []
         const moduleWildcards = []
