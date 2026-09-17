@@ -296,16 +296,35 @@ program
 
         if(params.check) {
             const githubRepo = pkg.repository.url.split("git+https://github.com/")[1].trim().split(".git")[0]
-            const res = await fetch("https://raw.githubusercontent.com/" + githubRepo + "/main/package.json")
-            const githubPkg = await res.json()
+            if(!/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
+                error("Unable to determine a valid GitHub repository for version check")
+                return
+            }
 
-            if(githubPkg.version != pkg.version) {
-                log(`Your version is not compatible with the latest version of Slim:
+            try {
+                const res = await fetch("https://raw.githubusercontent.com/" + githubRepo + "/main/package.json")
+                if(!res.ok) {
+                    error(`Version check failed: received HTTP ${res.status} from GitHub`)
+                    return
+                }
+
+                const githubPkg = await res.json()
+                if(typeof githubPkg?.version !== "string" || !/^\d+\.\d+\.\d+/.test(githubPkg.version)) {
+                    error("Version check failed: unexpected response format")
+                    return
+                }
+
+                if(githubPkg.version != pkg.version) {
+                    log(`Your version is not compatible with the latest version of Slim:
     Current: ${githubPkg.version}
     Your's: ${pkg.version}`)
+                }
+                else {
+                    log(`You on the latest Slim version`)
+                }
             }
-            else {
-                log(`You on the latest Slim version`)
+            catch (err) {
+                error(`Version check failed: ${err?.message ?? err}`)
             }
             return
         }
