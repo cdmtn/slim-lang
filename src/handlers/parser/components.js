@@ -1,9 +1,9 @@
 import { tokenize } from "../../lexer.js"
+import { parseTypedArgs, buildTypedArgsResult } from "../parserHandler.js"
 
 const OPENERS = new Set(["(", "[", "{", "${"])
 const CLOSERS = new Set([")", "]", "}"])
 
-// Find the top-level template return, skipping setup callbacks.
 function templateReturnStart(body) {
     let depth = 0
     for (const t of tokenize(body)) {
@@ -91,19 +91,33 @@ function parseComponents(code) {
     return out + code.slice(cursor);
 }
 
-function componentBinding(name, args) {
+function parseComponentArgs(name, args) {
     const trimmed = args.trim();
 
-    if (!trimmed) return "";
-    if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
-    if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) return trimmed;
+    if (!trimmed) return { binding: "", checks: "" };
 
-    throw new Error(
-        `Component "${name}" arguments must be a single object name (e.g. "props") or a destructuring pattern (e.g. "{ content }"), got: "${trimmed}"`
-    );
+    let parsed, binding;
+
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        parsed = parseTypedArgs(trimmed.slice(1, -1));
+        const fields = parsed.map(a => a.default !== null ? `${a.name} = ${a.default}` : a.name);
+        binding = `{ ${fields.join(", ")} }`;
+    } else {
+        parsed = parseTypedArgs(trimmed);
+
+        if (parsed.length !== 1 || !/^[A-Za-z_$][\w$]*$/.test(parsed[0].name)) {
+            throw new Error(
+                `Component "${name}" arguments must be a single object name (e.g. "props" or "props: SomeStruct") or a destructuring pattern (e.g. "{ id: int }"), got: "${trimmed}"`
+            );
+        }
+
+        binding = parsed[0].name;
+    }
+
+    const { checks } = buildTypedArgsResult(parsed, name);
+    return { binding, checks };
 }
 
-// Escape template text without changing nested interpolations.
 function escapeTemplateBackticks(s) {
     const n = s.length;
     let out = "";
@@ -154,10 +168,10 @@ function elementTag(name, explicit) {
     return `slim-${kebab}`;
 }
 
-// The same factory supports plain components and custom-element hosts.
-function buildElementComponent(name, binding, before, html, explicitTag) {
+function buildElementComponent(name, binding, before, html, explicitTag, checks = "") {
     const tag = elementTag(name, explicitTag);
     const param = binding ? `${binding} = {}` : "__unused__ = {}";
+    const checkPrelude = checks ? `${checks};\n` : "";
     const quoted = JSON.stringify(tag);
 
     return `
@@ -172,7 +186,7 @@ function buildElementComponent(name, binding, before, html, explicitTag) {
         	const onMount = (fn) => __mounts__.push(fn);
         	const onConnect = (fn) => __connects__.push(fn);
         	const onUnmount = (fn) => __unmounts__.push(fn);
-            ${before};
+            ${checkPrelude}${before};
             const __el__ = htmlToVdom(__html__\`${html}\`).toElement();
 
             if (!__host__) {
@@ -203,11 +217,12 @@ function buildComponent(name, args, body, modifier = null, tag = null) {
         template = template.slice(1, -1).trim();
     }
     const html = escapeTemplateBackticks(template);
-    const binding = componentBinding(name, args);
+    const { binding, checks } = parseComponentArgs(name, args);
     const param = binding ? `${binding} = {}` : "";
+    const checkPrelude = checks ? `${checks};\n` : "";
 
     if (modifier === "element") {
-        return buildElementComponent(name, binding, before, html, tag);
+        return buildElementComponent(name, binding, before, html, tag, checks);
     }
 
     const isolated = modifier === "isolated";
@@ -222,7 +237,7 @@ function buildComponent(name, args, body, modifier = null, tag = null) {
         	const onMount = (fn) => __mounts__.push(fn);
         	const onConnect = (fn) => __connects__.push(fn);
         	const onUnmount = (fn) => __unmounts__.push(fn);
-            ${before};
+            ${checkPrelude}${before};
             const __el__ = htmlToVdom(__html__\`${html}\`).toElement();
             for (const fn of __mounts__) fn(__el__);
             __lifecycle__(__el__, __connects__, __unmounts__);
@@ -234,9 +249,11 @@ function buildComponent(name, args, body, modifier = null, tag = null) {
     else {
         const fnBody = `const __mounts__=[];const __connects__=[];const __unmounts__=[];const onMount=(fn)=>__mounts__.push(fn);const onConnect=(fn)=>__connects__.push(fn);const onUnmount=(fn)=>__unmounts__.push(fn);${before}; const __el__ = htmlToVdom(__html__\`${html}\`).toElement(); for (const fn of __mounts__) fn(__el__); __lifecycle__(__el__, __connects__, __unmounts__); return __el__;`;
 
+        const guard = checks ? `const ${binding} = __props__;\n${checks};\n` : "";
+
         return `
         const ${name} = (__props__ = {}) => {
-            return new Function(${JSON.stringify(binding)}, ${JSON.stringify(fnBody)})(__props__);
+            ${guard}return new Function(${JSON.stringify(binding)}, ${JSON.stringify(fnBody)})(__props__);
         };
         ${name}.__component__ = true
         `;

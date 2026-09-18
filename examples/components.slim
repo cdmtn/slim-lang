@@ -1,5 +1,10 @@
-component H1({ first, second }) {
-    return <h1>${first}, ${second}</h1>
+struct UserComponent {
+    ID: int
+    Name: string
 }
 
-log(H1({ first: "Hello", second: "World!" }))
+component User(props: UserComponent) {
+    return <div>${props.Name}: ${props.ID}</div>
+}
+
+log(String(User({ ID: 3, Name: "John" }))) // <div>3</div>
