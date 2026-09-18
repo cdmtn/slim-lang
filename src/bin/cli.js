@@ -15,9 +15,7 @@ import pkg from "../../package.json" with { type: "json" };
 import defaultConfig from "./config.default.json" with { type: "json" };
 
 const root = process.cwd()
-// Toolchain scripts (compiler, runners) live inside the package, which is only
-// the same as the project root during local development. Resolve them from this
-// file's location so the commands work when installed from npm too.
+
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const compileScript = JSON.stringify(path.join(packageRoot, "src", "compile.js"))
 const runScript = JSON.stringify(path.join(packageRoot, "run-slim.js"))
