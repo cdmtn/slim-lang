@@ -555,11 +555,7 @@ function parseTypesEdits(code) {
             let bodyContent = body.content.trim()
 
             const normalizedBody = bodyContent.replace(/;\s*$/, "").trim()
-            if (!/^return(?:\s+[\s\S]+)?$/.test(normalizedBody)) {
-                throw new TypeDefError(`The "${typeName}" type body must contain exactly one return statement`)
-            }
-
-            if (normalizedBody === "return") bodyContent = "return true"
+            if (normalizedBody === "" || normalizedBody === "return") bodyContent = "return true"
 
             edits.push({
                 start,
