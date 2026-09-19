@@ -40,7 +40,25 @@ Requirements:
 - Node.js 22+
 - Git
 
-## Installation
+## NPM Installation
+
+Create your project, then run:
+```console
+npm i @slim-lang/core
+```
+```console
+npm link
+```
+Make sure the installation went smoothly:
+```console
+npm view @slim-lang/core version
+```
+```console
+slmc --version
+spm --version
+```
+
+## Source Installation
 Create a project folder, then run:
 
 - Clone project
