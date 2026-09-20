@@ -522,6 +522,29 @@ export function htmlToElement(input, doc = slimDocument) {
 	return vnodeToElement(htmlToVdom(input), doc);
 }
 
+export function __resolve_bem__(vnode, scope = "") {
+	if (!vnode || typeof vnode !== "object") return vnode;
+
+	if (vnode.type === "fragment") {
+		for (const child of vnode.children || []) __resolve_bem__(child, scope);
+		return vnode;
+	}
+
+	if (vnode.type === "element") {
+		let childScope = scope;
+		const cls = vnode.attrs && vnode.attrs.class;
+
+		if (typeof cls === "string" && cls.length) {
+			if (cls.includes("&")) vnode.attrs.class = cls.replaceAll("&", scope);
+			childScope = vnode.attrs.class.trim().split(/\s+/)[0] || scope;
+		}
+
+		for (const child of vnode.children || []) __resolve_bem__(child, childScope);
+	}
+
+	return vnode;
+}
+
 export function htmlToVdom(input) {
 	if (input instanceof VNode) return input;
 

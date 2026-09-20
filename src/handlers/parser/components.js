@@ -1,5 +1,33 @@
+import fs from "node:fs"
+import path from "node:path"
 import { tokenize } from "../../lexer.js"
 import { parseTypedArgs, buildTypedArgsResult } from "../parserHandler.js"
+
+let bemCache = null
+function useBEMClasses() {
+    if (bemCache !== null) return bemCache
+    try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(process.cwd(), "slimconfig.json"), "utf8"))
+        bemCache = !!(cfg.components && cfg.components.useBEMClasses === true)
+    } catch {
+        bemCache = false
+    }
+    return bemCache
+}
+
+function kebabCase(name) {
+    return name
+        .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+        .replace(/[_\s]+/g, "-")
+        .toLowerCase()
+}
+
+// The expression that turns the template into a DOM element, resolving `&`
+// parent references first when BEM classes are enabled.
+function elementExpr(html, name) {
+    if (!useBEMClasses()) return `htmlToVdom(__html__\`${html}\`).toElement()`
+    return `(() => { const __v__ = htmlToVdom(__html__\`${html}\`); __resolve_bem__(__v__, ${JSON.stringify(kebabCase(name))}); return __v__.toElement(); })()`
+}
 
 const OPENERS = new Set(["(", "[", "{", "${"])
 const CLOSERS = new Set([")", "]", "}"])
@@ -187,7 +215,7 @@ function buildElementComponent(name, binding, before, html, explicitTag, checks 
         	const onConnect = (fn) => __connects__.push(fn);
         	const onUnmount = (fn) => __unmounts__.push(fn);
             ${checkPrelude}${before};
-            const __el__ = htmlToVdom(__html__\`${html}\`).toElement();
+            const __el__ = ${elementExpr(html, name)};
 
             if (!__host__) {
                 for (const fn of __mounts__) fn(__el__);
@@ -238,7 +266,7 @@ function buildComponent(name, args, body, modifier = null, tag = null) {
         	const onConnect = (fn) => __connects__.push(fn);
         	const onUnmount = (fn) => __unmounts__.push(fn);
             ${checkPrelude}${before};
-            const __el__ = htmlToVdom(__html__\`${html}\`).toElement();
+            const __el__ = ${elementExpr(html, name)};
             for (const fn of __mounts__) fn(__el__);
             __lifecycle__(__el__, __connects__, __unmounts__);
             return __el__;
@@ -247,7 +275,7 @@ function buildComponent(name, args, body, modifier = null, tag = null) {
         `;
     }
     else {
-        const fnBody = `const __mounts__=[];const __connects__=[];const __unmounts__=[];const onMount=(fn)=>__mounts__.push(fn);const onConnect=(fn)=>__connects__.push(fn);const onUnmount=(fn)=>__unmounts__.push(fn);${before}; const __el__ = htmlToVdom(__html__\`${html}\`).toElement(); for (const fn of __mounts__) fn(__el__); __lifecycle__(__el__, __connects__, __unmounts__); return __el__;`;
+        const fnBody = `const __mounts__=[];const __connects__=[];const __unmounts__=[];const onMount=(fn)=>__mounts__.push(fn);const onConnect=(fn)=>__connects__.push(fn);const onUnmount=(fn)=>__unmounts__.push(fn);${before}; const __el__ = ${elementExpr(html, name)}; for (const fn of __mounts__) fn(__el__); __lifecycle__(__el__, __connects__, __unmounts__); return __el__;`;
 
         const guard = checks ? `const ${binding} = __props__;\n${checks};\n` : "";
 
