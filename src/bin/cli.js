@@ -351,7 +351,7 @@ program
         packageCheck()
 
         if (!fs.existsSync(slimConfigPath)) {
-            fs.writeFileSync(slimConfigPath, JSON.stringify({ main: "index", usePackages: true }, null, 4), "utf8")
+            fs.writeFileSync(slimConfigPath, JSON.stringify({ main: "index", uses: { style: "import", enabled: true } }, null, 4), "utf8")
             log("Created slimconfig.json")
         } else {
             log("slimconfig.json already exists, leaving it untouched")

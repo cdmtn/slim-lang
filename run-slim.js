@@ -11,7 +11,8 @@ const root = process.cwd();
 
 const config = JSON.parse(readFileSync(path.join(root, 'slimconfig.json'), 'utf8'));
 const mainFile = config.main;
-const distDir = typeof config.dist === 'string' && config.dist.trim() ? config.dist : 'slim-dist';
+const distName = (config.names && config.names.dist) ?? config.dist;
+const distDir = typeof distName === 'string' && distName.trim() ? distName : 'slim-dist';
 
 const dist = path.join(root, distDir, `${mainFile}.js`);
 const args = ['--enable-source-maps', '--no-warnings', dist];

@@ -90,7 +90,7 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
 
     if (!usePackages && uses.length > 0) {
         const err = new UseError(
-            `The "use" feature is disabled. Set "usePackages": true in slimconfig.json to enable imports (in ${abs}, found: use ${uses[0]})`
+            `The "use" feature is disabled. Set "uses": { "enabled": true } in slimconfig.json to enable imports (in ${abs}, found: use ${uses[0]})`
         )
         console.error(err)
         process.exit(1)
@@ -209,11 +209,14 @@ async function main() {
         process.exit(1)
     }
 
-    usePackages = data.usePackages !== false
+    const uses = data.uses && typeof data.uses === "object" ? data.uses : null
+    usePackages = uses ? uses.enabled !== false : data.usePackages !== false
+    useStyle = uses
+        ? (typeof uses.style === "string" ? uses.style : "import")
+        : (typeof data.uses === "string" ? data.uses : "import")
     jsdoc = data.jsdoc === true
     declarations = data.declarations === true
     check = data.check !== false && process.env.SLIM_NO_CHECK !== "1"
-    useStyle = typeof data.uses === "string" ? data.uses : "import"
 
     if (!("main" in data)) return
 

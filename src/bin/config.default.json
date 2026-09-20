@@ -1,7 +1,11 @@
 {
     "main": "path/to/your/files",
-    "usePackages": true,
-    "uses": "import",
-    "packages": "packages",
-    "dist": "slim-dist"
+    "uses": {
+        "style": "import",
+        "enabled": true
+    },
+    "names": {
+        "packages": "packages",
+        "dist": "slim-dist"
+    }
 }

@@ -12,7 +12,8 @@ const config = JSON.parse(
     fs.readFileSync("slimconfig.json", "utf8")
 );
 
-const distDir = typeof config.dist === "string" && config.dist.trim() ? config.dist : "slim-dist";
+const distName = (config.names && config.names.dist) ?? config.dist;
+const distDir = typeof distName === "string" && distName.trim() ? distName : "slim-dist";
 const entry = `${distDir}/${config.main}.js`;
 const hot = process.argv.includes("--hot");
 

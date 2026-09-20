@@ -15,12 +15,18 @@ function readConfig() {
     }
 }
 
+function configName(key, fallback) {
+    const config = readConfig()
+    const names = config.names && typeof config.names === "object" ? config.names : {}
+    const value = names[key] ?? config[key]
+    return typeof value === "string" && value.trim() ? value : fallback
+}
+
 let projectPackagesCache = null
 export function projectPackagesDir() {
     if (projectPackagesCache) return projectPackagesCache
 
-    const dir = readConfig().packages
-    projectPackagesCache = path.resolve(typeof dir === "string" && dir.trim() ? dir : "packages")
+    projectPackagesCache = path.resolve(configName("packages", "packages"))
     return projectPackagesCache
 }
 
@@ -28,8 +34,7 @@ let distDirCache = null
 export function distDirName() {
     if (distDirCache) return distDirCache
 
-    const dir = readConfig().dist
-    distDirCache = typeof dir === "string" && dir.trim() ? dir : "slim-dist"
+    distDirCache = configName("dist", "slim-dist")
     return distDirCache
 }
 
