@@ -22,8 +22,6 @@ function kebabCase(name) {
         .toLowerCase()
 }
 
-// The expression that turns the template into a DOM element, resolving `&`
-// parent references first when BEM classes are enabled.
 function elementExpr(html, name) {
     if (!useBEMClasses()) return `htmlToVdom(__html__\`${html}\`).toElement()`
     return `(() => { const __v__ = htmlToVdom(__html__\`${html}\`); __resolve_bem__(__v__, ${JSON.stringify(kebabCase(name))}); return __v__.toElement(); })()`
@@ -45,8 +43,26 @@ function templateReturnStart(body) {
     return -1
 }
 
+function literalRanges(code) {
+    const tokens = tokenize(code);
+    const literal = t => t.type === "string" || t.type === "template" || t.type === "comment" || t.type === "regex";
+
+    return offset => {
+        let lo = 0, hi = tokens.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const t = tokens[mid];
+            if (offset < t.start) hi = mid - 1;
+            else if (offset >= t.end) lo = mid + 1;
+            else return literal(t);
+        }
+        return false;
+    };
+}
+
 function parseComponentsEdits(code) {
     const edits = [];
+    const inLiteral = literalRanges(code);
     let i = 0;
 
     while (i < code.length) {
@@ -59,6 +75,11 @@ function parseComponentsEdits(code) {
         const modifier = match[1] ?? null;
         const tag = match[2] ?? null;
         const start = i + match.index;
+
+        if (inLiteral(start + match[0].length - "component".length)) {
+            i = start + match[0].length;
+            continue;
+        }
 
         let p = start + match[0].length;
 
