@@ -9,6 +9,7 @@ import {
     isSameType
 } from "./types.js"
 import { formatError, resolveErrorLocation } from "./classErrors.js"
+import { generateStructValidator, isInlineKind } from "./codegen.js"
 
 const __structs__ = {}
 const __enums__ = {}
@@ -30,6 +31,14 @@ const __RESERVED_DEFINES__ = new Set([
     "type", "schemeArray", "verify", "values", "verifySafe"
 ])
 export const __custom_types__ = {}
+
+// Opt-in struct validators generated with new Function (see codegen.js). It
+// applies to structs defined after it is switched on.
+let CODEGEN = typeof process !== "undefined" && process.env?.SLIM_CODEGEN === "1"
+
+export function __type_codegen__(enabled) {
+    CODEGEN = !!enabled
+}
 
 function writeError(text) {
     if (typeof process !== "undefined" && process.stderr) process.stderr.write(text)
@@ -359,9 +368,44 @@ function compileFields(schema) {
     const fields = Object.entries(schema).map(([name, definition]) => ({
         name,
         optional: definition.optional,
-        test: compileSpec(definition.specification)
+        test: compileSpec(definition.specification),
+        kind: inlineKind(definition.specification)
     }))
     return { fields, names: new Set(fields.map(field => field.name)) }
+}
+
+// The label of a single plain reference whose check the generator can inline,
+// or null. Names that now resolve to a definition are never inlined.
+function inlineKind(specification) {
+    if (!Array.isArray(specification) || specification.length !== 1) return null
+
+    const reference = specification[0]
+    const label = typeof reference === "string" ? reference : reference?.label
+    if (!label || typeof reference?.resolve === "function" || !isInlineKind(label)) return null
+    if (label !== "any" && lookupName(nameOfLabel(label)) !== undefined) return null
+    return label
+}
+
+// Same contract as the closure predicate below, backed by generated code. It
+// is rebuilt when the schema or the set of registered definitions changes.
+function generatedStructPredicate(definition, fallback) {
+    let version = -1
+    let compiledFor = null
+    let generated = fallback
+
+    return value => {
+        const schema = definition.scheme
+        if (version !== registryVersion || compiledFor !== schema) {
+            try {
+                generated = generateStructValidator(compileFields(schema).fields, schema)
+            } catch {
+                generated = fallback
+            }
+            version = registryVersion
+            compiledFor = schema
+        }
+        return generated(value)
+    }
 }
 
 // One predicate per struct: shape, extra keys, optional fields and field types.
@@ -400,6 +444,7 @@ function structPredicate(definition) {
         }
         return true
     }
+    if (CODEGEN) predicate = generatedStructPredicate(definition, predicate)
     structPredicates.set(definition, predicate)
     return predicate
 }
@@ -1150,6 +1195,7 @@ Object.assign(globalThis, {
     __typed_parameter__, __typed_static_field__, __typed_static_field_check__,
     __type_def__, __argument_typed__,
     __type_ref__, __type_spec__, __type_spec_all__, __type_matches__, __type_label__,
+    __type_codegen__,
 
     StructError, StructPassedError, StructExpectError, ArgumentDeclarationTypeError,
 

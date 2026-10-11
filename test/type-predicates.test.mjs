@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
     __def_struct__, __def_enum__, __type_def__, __type_ref__, __type_spec__, __type_spec_all__,
-    __type_matches__, __typed__, __typed_variable__, __typed_variable_check__,
+    __type_matches__, __type_codegen__, __typed__, __typed_variable__, __typed_variable_check__,
     __typed_parameter__, __typed_return__, type
 } from "../src/external/core.js"
 import { createLegacyRuntime } from "./legacy-type-matcher.mjs"
@@ -12,7 +12,7 @@ class Other {}
 const ref = (label, resolve) => resolve ? __type_ref__(label, resolve) : __type_ref__(label)
 
 // Declares the same types in the real runtime and in the legacy reference.
-// `p` keeps definition names unique between the runs.
+// `p` keeps names unique between the closure and the generated variants.
 function declare(p) {
     const legacy = createLegacyRuntime()
     const real = { structs: {}, enums: {}, customs: {} }
@@ -152,9 +152,12 @@ function describeValue(value) {
     try { return typeof value === "symbol" ? "symbol" : typeof value === "function" ? "fn" : String(JSON.stringify(value) ?? value) } catch { return String(value) }
 }
 
-for (const mode of ["closures"]) {
-    const prefix = "C"
+for (const mode of ["closures", "generated"]) {
+    const generated = mode === "generated"
+    const prefix = generated ? "G" : "C"
+    __type_codegen__(generated)
     const world = declare(prefix)
+    __type_codegen__(false)
 
     const w = { p: prefix, structs: world.real.structs, enums: world.real.enums, customs: world.real.customs }
     // The legacy side resolves local thunks against its own definitions.
@@ -338,11 +341,27 @@ test("mutation guards still reject bad writes and reuse the proxy per value and 
     assert.equal(__typed_variable__(loose, __type_spec__(__type_ref__("any")), {}, "z"), loose)
 })
 
-test("a custom type registered later with a builtin's name re-routes struct fields", () => {
-    const Odd = __def_struct__("LateOdd", { n: "int", list: "int[]" }, {
-        n: __type_spec__(__type_ref__("int")),
-        list: __type_spec__(__type_ref__("int[]"))
-    })
+test("generated validators handle awkward field names and optional fields", () => {
+    __type_codegen__(true)
+    let Odd
+    try {
+        Odd = __def_struct__("GenOdd", { 'we"ird\nname': "int", "*opt": "string", "*loose": "any", list: "int[]" }, {
+            'we"ird\nname': __type_spec__(__type_ref__("int")),
+            opt: __type_spec__(__type_ref__("string")),
+            loose: __type_spec__(__type_ref__("any")),
+            list: __type_spec__(__type_ref__("int[]"))
+        })
+    } finally {
+        __type_codegen__(false)
+    }
+
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [1] }).success, true)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [1], opt: "s", loose: undefined }).success, true)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [1], opt: 2 }).success, false)
+    assert.equal(Odd.verifySafe({ list: [1] }).success, false)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [] }).success, false)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [1], extra: 1 }).success, false)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [1], constructor: 1 }).success, true)
 
     // A custom type registered later with a builtin's name re-routes the field,
     // exactly as the legacy lookup-on-every-call did. This runs last: the
@@ -357,8 +376,30 @@ test("a custom type registered later with a builtin's name re-routes struct fiel
             assert.equal(__type_matches__(spec, value), reference.matches(spec, value), `${label} vs ${JSON.stringify(value)}`)
         }
     }
-    assert.equal(Odd.verifySafe({ n: 42, list: [42] }).success, true)
-    assert.equal(Odd.verifySafe({ n: 42, list: [1] }).success, false)
-    assert.equal(Odd.verifySafe({ n: 1, list: [42] }).success, false)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 42, list: [42] }).success, true)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 42, list: [1] }).success, false)
+    assert.equal(Odd.verifySafe({ 'we"ird\nname': 1, list: [42] }).success, false)
 })
 
+test("the generator emits a switch over constant field names and defers to the closures on a miss", async () => {
+    const { generateStructValidator, isInlineKind } = await import("../src/external/codegen.js")
+    const calls = []
+    const fields = [
+        { name: "a", optional: false, kind: "int", test: v => (calls.push(["a", v]), v === 5) },
+        { name: "b", optional: true, kind: null, test: v => (calls.push(["b", v]), v === "ok") }
+    ]
+    const validator = generateStructValidator(fields, { a: {}, b: {} })
+
+    assert.match(validator.toString(), /switch \(keys\[i\]\)/)
+    assert.equal(isInlineKind("int[]"), true)
+    assert.equal(isInlineKind("Tag"), false)
+    assert.equal(isInlineKind("constructor"), false)
+
+    assert.equal(validator({ a: 1 }), true)
+    assert.deepEqual(calls, [], "an inline hit never calls the closure")
+    assert.equal(validator({ a: 5.5 }), false)
+    assert.equal(validator({ a: 1, b: "no" }), false)
+    assert.deepEqual(calls, [["a", 5.5], ["b", "no"]])
+    assert.equal(validator({ a: 1, b: undefined }), false, "an explicit undefined is present, so it is checked")
+    assert.equal(validator({ a: 1 }), true, "an absent optional field is skipped")
+})
