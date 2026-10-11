@@ -66,7 +66,7 @@ test("release mode drops the return check", () => {
         }
 
         log(parse(\`{ "value": "seven" }\`))
-    `, path.join(root, "__return_tests__", "release.slim"))
+    `, path.join(root, "__return_tests__", "release.slim"), { release: true })
 
     const outputFile = path.join(outputDir, "release.js")
     writeFileSync(outputFile, code.replace(
@@ -77,7 +77,7 @@ test("release mode drops the return check", () => {
     const result = spawnSync(process.execPath, ["--no-warnings", outputFile], {
         cwd: root,
         encoding: "utf8",
-        env: { ...process.env, SLIM_RELEASE: "1" }
+        env: { ...process.env }
     })
 
     assert.equal(result.status, 0, result.stderr)

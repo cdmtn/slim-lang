@@ -72,10 +72,12 @@ program
     .command("build")
     .description("Build a Slim project")
     .option("-S, --silent", "Build without log")
+    .option("-R, --release", "Erase runtime checks at compile time (output goes to <dist>-release)")
     .option("--no-check", "Build without static type checking")
     .action((params) => {
         slimConfigCheck()
 
+        if(params.release) process.env.SLIM_RELEASE = "1"
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
 
         if(!params.silent) log("Building...")
@@ -88,7 +90,7 @@ program
     .description("Build and run a Slim project")
     .option("-S, --silent", "Run without log")
     .option("-D, --dev", "Run with dev features enabled (SLIM_DEV)")
-    .option("-R, --release", "Run without runtime type checks")
+    .option("-R, --release", "Build in release mode (checks erased at compile time) and run")
     .option("--no-check", "Run without static type checking")
     .action((params) => {
         slimConfigCheck()
@@ -139,7 +141,7 @@ program
     .description("Run a Slim server (prod by default; --dev for watch + live reload)")
     .option("-D, --dev", "Dev mode: watch, rebuild, live reload, request logs")
     .option("-H, --hot", "Dev mode with hot reload")
-    .option("-R, --release", "Run without runtime type checks")
+    .option("-R, --release", "Build in release mode (checks erased at compile time) and run")
     .action((params) => {
         slimConfigCheck()
 

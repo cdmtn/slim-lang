@@ -7,7 +7,7 @@ import { readFile } from 'fs/promises';
 import { Debug } from "./external/core.js";
 import { stripComments } from "./parser.js";
 import { UseError } from "./external/classErrors.js";
-import { getDistPath, resolveSlimSource, PACKAGE_ROOT, distDirName } from "./modulePaths.js";
+import { getDistPath, resolveSlimSource, PACKAGE_ROOT, distDirName, baseDistDirName, isReleaseBuild } from "./modulePaths.js";
 
 const compiled = new Set()
 
@@ -114,7 +114,7 @@ function compileFile(slimFile, isEntry = false, mainEntry = null) {
         compileFile(depPath, false, mainEntry)
     }
 
-    const { code: output, declarations: dts } = transform(code, abs, { jsdoc, declarations, check, uses: useStyle })
+    const { code: output, declarations: dts } = transform(code, abs, { jsdoc, declarations, check, uses: useStyle, release: isReleaseBuild() })
 
     const outputPath = isEntry
         ? path.resolve(distDirName(), `${mainEntry}.js`)
@@ -191,7 +191,7 @@ function writeJsConfig() {
             strict: false,
             skipLibCheck: true
         },
-        include: [distDirName()]
+        include: [baseDistDirName()]
     }
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 4) + "\n")
