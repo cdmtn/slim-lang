@@ -1,5 +1,6 @@
 import _traverse from "@babel/traverse"
 import * as t from "@babel/types"
+import { splitType } from "./typeSyntax.js"
 
 const traverse = _traverse.default ?? _traverse
 
@@ -18,8 +19,11 @@ function mapType(label) {
     }
     if (label.endsWith("?")) return mapType(label.slice(0, -1)) + " | null | undefined"
     if (label.endsWith("[]")) return mapType(label.slice(0, -2)) + "[]"
-    if (label.includes("|")) return [...new Set(label.split("|").map(mapType))].join(" | ")
-    if (label.includes("&")) return [...new Set(label.split("&").map(mapType))].join(" & ")
+    if (splitType(label, "|").length > 1) return [...new Set(splitType(label, "|").map(mapType))].join(" | ")
+    if (splitType(label, "&").length > 1) return [...new Set(splitType(label, "&").map(mapType))].join(" & ")
+    const generic = label.indexOf("<")
+    if (generic !== -1 && label.endsWith(">")) return label.slice(0, generic) + "<" +
+        splitType(label.slice(generic + 1, -1)).map(mapType).join(", ") + ">"
     if (label.includes("::")) return "number | string"
     return PRIMITIVES[label] ?? label
 }

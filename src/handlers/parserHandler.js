@@ -38,7 +38,7 @@ function extractExpr(str, startPos) {
 
         if (depth === 0) {
             const two = str.slice(i, i + 2)
-            if (["==", "!=", ">=", "<=", "&&", "||", "??"].includes(two)) break
+            if (["==", "!=", ">=", "<=", "&&", "||", "??", "|>"].includes(two)) break
             if (["+", "-", "*", "/", "%", "<", ">", "?", ":", ";", ",", "\n"].includes(ch)) break
         }
 
@@ -114,6 +114,9 @@ function extractExprRaw(str, startPos) {
 
             if ((ch === '-' || ch === '+') && i === contentStart) { i++; continue }
 
+            if (ch === '\n' && (/^\s*\|>/.test(str.slice(i + 1)) || /\|>\s*$/.test(str.slice(contentStart, i)))) {
+                i++; continue
+            }
             if ([';', ',', '\n'].includes(ch)) break
 
             if (ch === '?') { ternaryDepth++; i++; continue }
@@ -207,7 +210,7 @@ function readTypeAnnotation(src, pos) {
         skipSpace(true)
 
         const separator = src[i]
-        if ((separator !== "|" && separator !== "&") || src[i + 1] === separator) {
+        if ((separator !== "|" && separator !== "&") || src[i + 1] === separator || src[i + 1] === ">") {
             i = resume
             break
         }

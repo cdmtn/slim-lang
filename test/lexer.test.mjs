@@ -50,6 +50,13 @@ test("keywords and slim operators are classified", () => {
     assert.ok(tokens.some(t => t.type === "punct" && t.value === "~/"))
 })
 
+test("pipe uses longest matching punctuation without changing JS bars or questions", () => {
+    const source = "a |> f || b | c |= d; r?; x?.y; x ?? y; x ? y : z; let n: int? = null"
+    assert.equal(rebuild(source), source)
+    assert.deepEqual(tokenize(source).filter(t => t.type === "punct").map(t => t.value),
+        ["|>", "||", "|", "|=", ";", "?", ";", "?.", ";", "??", ";", "?", ":", ";", ":", "?", "="])
+})
+
 test("keywords inside strings and comments are not names", () => {
     const inString = tokenize("\"a or b\"")
     assert.ok(!inString.some(t => t.type === "name" && t.value === "or"))

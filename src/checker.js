@@ -2,13 +2,16 @@ import _traverse from "@babel/traverse"
 import * as t from "@babel/types"
 import path from "node:path"
 import { computeLineStarts, offsetToLineCol } from "./sourcemap.js"
+import { analyzeChecks, returnsOnEveryPath } from "./proofs.js"
+import { isResultTry, resultReturnType } from "./operators.js"
+import { formatError, ERROR_CODES, diagnosticDetails } from "./external/errors/index.js"
 
 const traverse = _traverse.default ?? _traverse
 
 const NUMERIC = new Set(["int", "float", "number"])
 const KNOWN = new Set([
     "int", "float", "number", "string", "bool", "null", "undefined",
-    "object", "array", "function", "any", "element"
+    "object", "array", "function", "any", "element", "Result"
 ])
 
 function splitUnion(label) {
@@ -128,7 +131,11 @@ export function createEnvironment() {
         methodOwners: new Map(),
         returns: new Map(),
         functionsByName: new Map(),
-        importedFunctions: new Map()
+        importedFunctions: new Map(),
+        // Bindings whose writes are runtime-checked, and the type they are guaranteed to hold.
+        runtimeTyped: new Map(),
+        provenBindings: new Map(),
+        fnDefs: new Map()
     }
 }
 
@@ -184,6 +191,12 @@ function acceptsAtom(target, source, env) {
     }
 
     const targetGeneric = genericOf(target)
+    if (targetGeneric?.container === "Result") {
+        const sourceGeneric = genericOf(source)
+        return sourceGeneric?.container === "Result" && targetGeneric.args.length === 2 && sourceGeneric.args.length === 2
+            ? targetGeneric.args.every((part, index) => accepts(part, sourceGeneric.args[index], env, true))
+            : source === "Result"
+    }
     if (targetGeneric) {
         return baseName(target) === baseName(source)
     }
@@ -202,7 +215,7 @@ function acceptsAtom(target, source, env) {
         const definition = env.enums.get(enumName)
         if (!definition) return true
         if (source === target || source === enumName) return true
-        return definition.valueTypes.has(source)
+        return false
     }
 
     if (env.enums.has(target)) {
@@ -250,6 +263,10 @@ function structLiteralLabel(node, env) {
 
 export function infer(node, path_, env) {
     if (!node) return null
+    if (isResultTry(node)) {
+        const result = genericOf(infer(node.callee.object, path_, env) ?? "")
+        return result?.container === "Result" ? result.args[0] ?? null : null
+    }
 
     if (t.isNumericLiteral(node)) return Number.isInteger(node.value) ? "int" : "float"
     if (t.isStringLiteral(node) || t.isTemplateLiteral(node)) return "string"
@@ -310,6 +327,12 @@ export function infer(node, path_, env) {
             return `${node.object.name}::${node.property.name}`
         }
         const objectType = infer(node.object, path_, env)
+        const result = genericOf(objectType ?? "")
+        if (result?.container === "Result") {
+            if (node.property.name === "value") return result.args[0]
+            if (node.property.name === "error") return result.args[1]
+            if (node.property.name === "ok") return "bool"
+        }
         const definition = objectType ? resolveStruct(objectType, env) : null
         return definition?.fields.get(node.property.name)?.type ?? null
     }
@@ -366,6 +389,11 @@ export function infer(node, path_, env) {
         const label = typedVariableLabel(node)
         if (label) return label
 
+        if (["Ok", "Err"].includes(node.callee.name) && !path_.scope.getBinding(node.callee.name)) {
+            const payload = infer(node.arguments[0], path_, env) ?? "any"
+            return node.callee.name === "Ok" ? `Result<${payload}, any>` : `Result<any, ${payload}>`
+        }
+
         return signatureFor(node.callee.name, path_, env)?.returns ?? null
     }
 
@@ -408,11 +436,12 @@ function collectParameters(fn) {
     const parameters = fn.params.map(param => {
         if (t.isRestElement(param)) { rest = true; return { name: null, type: null, required: false } }
         if (t.isAssignmentPattern(param) && t.isIdentifier(param.left)) {
-            return { name: param.left.name, type: declared.get(param.left.name)?.type ?? null, required: false }
+            const info = declared.get(param.left.name)
+            return { name: param.left.name, type: info?.type ?? null, required: false, optional: !!info?.optional }
         }
         if (t.isIdentifier(param)) {
             const info = declared.get(param.name)
-            return { name: param.name, type: info?.type ?? null, required: !info?.optional }
+            return { name: param.name, type: info?.type ?? null, required: !info?.optional, optional: !!info?.optional }
         }
         return { name: null, type: null, required: false }
     })
@@ -519,7 +548,11 @@ function collect(ast, env) {
                 }
 
                 const label = typedVariableLabel(init)
-                if (label && binding) env.bindings.set(binding, label)
+                if (label && binding) {
+                    env.bindings.set(binding, label)
+                    env.runtimeTyped.set(binding, { label })
+                    env.provenBindings.set(binding, label)
+                }
             }
 
             const instance = structLiteralLabel(init, env)
@@ -527,7 +560,9 @@ function collect(ast, env) {
 
             if ((t.isArrowFunctionExpression(init) || t.isFunctionExpression(init)) && binding) {
                 const signature = collectParameters(init)
+                signature.soundReturn = !!signature.returns && binding.constant && returnsOnEveryPath(init)
                 env.functions.set(binding, signature)
+                env.fnDefs.set(binding, { path: path_.get("init") })
                 if (binding.scope.path.isProgram()) env.functionsByName.set(id.name, signature)
             }
         },
@@ -539,7 +574,9 @@ function collect(ast, env) {
             if (!binding) return
 
             const signature = collectParameters(path_.node)
+            signature.soundReturn = !!signature.returns && binding.constant && returnsOnEveryPath(path_.node)
             env.functions.set(binding, signature)
+            env.fnDefs.set(binding, { path: path_ })
             if (binding.scope.path.isProgram()) env.functionsByName.set(name, signature)
         },
 
@@ -548,7 +585,13 @@ function collect(ast, env) {
             for (const parameter of parameters) {
                 if (!parameter.name || !parameter.type) continue
                 const binding = path_.scope.getBinding(parameter.name)
-                if (binding) env.bindings.set(binding, parameter.type)
+                if (!binding) continue
+                env.bindings.set(binding, parameter.type)
+                env.runtimeTyped.set(binding, { label: parameter.type })
+                // An optional parameter is let through as null/undefined by the runtime check.
+                env.provenBindings.set(binding, parameter.optional
+                    ? `${parameter.type} | null | undefined`
+                    : parameter.type)
             }
 
             if (returns) {
@@ -576,20 +619,20 @@ function checkStructLiteral(structName, node, path_, env, report) {
         seen.add(key)
         const field = definition.fields.get(key)
         if (!field) {
-            report(property, `"${structName}" has no field "${key}"`)
+            report(property, `"${structName}" has no field "${key}"`, { code: ERROR_CODES.UNKNOWN_FIELD })
             continue
         }
 
         const value = infer(property.value, path_, env)
         if (!accepts(field.type, value, env)) {
             report(property.value,
-                `"${structName}.${key}" expects ${describe(field.type)}, got ${describe(value)}`)
+                `"${structName}.${key}" expects ${describe(field.type)}, got ${describe(value)}`, { expected: field.type, got: value })
         }
     }
 
     for (const [name, field] of definition.fields) {
         if (field.optional || seen.has(name) || definition.defaults.has(name)) continue
-        report(node, `"${structName}" is missing field "${name}" of type ${describe(field.type)}`)
+        report(node, `"${structName}" is missing field "${name}" of type ${describe(field.type)}`, { code: ERROR_CODES.MISSING_FIELD })
     }
 }
 
@@ -646,7 +689,7 @@ function checkExhaustive(node, match, path_, env, report) {
     if (missing.length === 0) return
 
     report(node, `match on "${enumName}" does not handle ${missing.map(member => `${enumName}.${member}`).join(", ")}` +
-        ` — add the missing case${missing.length === 1 ? "" : "s"} or a "_" fallback`)
+        ` — add the missing case${missing.length === 1 ? "" : "s"} or a "_" fallback`, { code: ERROR_CODES.MATCH })
 }
 
 function checkValue(label, node, path_, env, report, describeTarget, phrase = "expects") {
@@ -657,7 +700,8 @@ function checkValue(label, node, path_, env, report, describeTarget, phrase = "e
 
     const actual = infer(node, path_, env)
     if (!accepts(label, actual, env)) {
-        report(node, `${describeTarget} ${phrase} ${describe(label)}, got ${describe(actual)}`)
+        report(node, `${describeTarget} ${phrase} ${describe(label)}, got ${describe(actual)}`, { expected: label, got: actual,
+            emptyArray: t.isArrayExpression(node) && node.elements.length === 0 })
     }
 }
 
@@ -687,6 +731,21 @@ function verify(ast, env, report) {
         CallExpression(path_) {
             const { node } = path_
 
+            if (isResultTry(node)) {
+                const label = infer(node.callee.object, path_, env)
+                const result = genericOf(label ?? "")
+                if (label && label !== "any" && label !== "Result" && result?.container !== "Result") {
+                    report(node.callee.property, `Postfix ? expects Result<T, E>, got ${describe(label)}`)
+                }
+                const fn = path_.getFunctionParent()
+                const returns = fn ? genericOf(resultReturnType(fn.node) ?? "") : null
+                if (returns?.container === "Result" && result?.container === "Result" &&
+                    !accepts(returns.args[1], result.args[1], env, true)) {
+                    report(node.callee.property, `Postfix ? propagates ${describe(result.args[1])}, but the function expects error ${describe(returns.args[1])}`)
+                }
+                return
+            }
+
             const match = matchExpression(node)
             if (match) checkExhaustive(node, match, path_, env, report)
 
@@ -703,14 +762,14 @@ function verify(ast, env, report) {
 
                     const field = definition.fields.get(key)
                     if (!field) {
-                        report(property, `"${constructed}" has no field "${key}"`)
+                        report(property, `"${constructed}" has no field "${key}"`, { code: ERROR_CODES.UNKNOWN_FIELD })
                         continue
                     }
 
                     const value = infer(property.value, path_, env)
                     if (!accepts(field.type, value, env)) {
                         report(property.value,
-                            `"${constructed}.${key}" expects ${describe(field.type)}, got ${describe(value)}`)
+                            `"${constructed}.${key}" expects ${describe(field.type)}, got ${describe(value)}`, { expected: field.type, got: value })
                     }
                 }
                 return
@@ -726,12 +785,12 @@ function verify(ast, env, report) {
             const required = signature.parameters.filter(parameter => parameter.required).length
 
             if (node.arguments.length < required) {
-                report(node, `"${name}" expects ${required} argument${required === 1 ? "" : "s"}, got ${node.arguments.length}`)
+                report(node, `"${name}" expects ${required} argument${required === 1 ? "" : "s"}, got ${node.arguments.length}`, { code: ERROR_CODES.ARGUMENT_COUNT })
                 return
             }
             if (!signature.rest && node.arguments.length > signature.parameters.length) {
                 report(node,
-                    `"${name}" takes ${signature.parameters.length} argument${signature.parameters.length === 1 ? "" : "s"}, got ${node.arguments.length}`)
+                    `"${name}" takes ${signature.parameters.length} argument${signature.parameters.length === 1 ? "" : "s"}, got ${node.arguments.length}`, { code: ERROR_CODES.ARGUMENT_COUNT })
                 return
             }
 
@@ -752,7 +811,7 @@ function verify(ast, env, report) {
             if (!value) {
                 if (!accepts(declared.label, "undefined", env)) {
                     report(path_.node,
-                        `"${declared.name}" must return ${describe(declared.label)}, got undefined`)
+                        `"${declared.name}" must return ${describe(declared.label)}, got undefined`, { expected: declared.label, got: "undefined" })
                 }
                 return
             }
@@ -773,7 +832,7 @@ function verify(ast, env, report) {
             const field = node.property.name
             if (definition.fields.has(field) || definition.methods.has(field)) return
 
-            report(node.property, `"${label}" has no field "${field}"`)
+            report(node.property, `"${label}" has no field "${field}"`, { code: ERROR_CODES.UNKNOWN_FIELD })
         }
     })
 }
@@ -871,19 +930,56 @@ function seedImports(env, imports, wildcards) {
     }
 }
 
-export function checkTypes(ast, { mapped, originalCode, sourceFile, imports = [], wildcards = [] }) {
+// Cross-module type records survive between builds by being serialised into the build cache.
+const tag = (kind, entries) => ({ $: kind, entries })
+const encodeRecord = (_key, value) => {
+    if (value instanceof Map) return tag("map", [...value])
+    if (value instanceof Set) return tag("set", [...value])
+    return value
+}
+const decodeRecord = (_key, value) => {
+    if (value && typeof value === "object" && value.$ === "map") return new Map(value.entries)
+    if (value && typeof value === "object" && value.$ === "set") return new Set(value.entries)
+    return value
+}
+
+export function exportModuleTypes(sourceFile) {
+    const record = moduleTypes.get(path.resolve(sourceFile))
+    return record ? JSON.parse(JSON.stringify(record, encodeRecord)) : null
+}
+
+export function importModuleTypes(sourceFile, data) {
+    moduleTypes.set(path.resolve(sourceFile), JSON.parse(JSON.stringify(data), decodeRecord))
+}
+
+export function checkTypes(ast, { mapped, originalCode, sourceFile, imports = [], wildcards = [], elide = true, checks = null }) {
     const env = createEnvironment()
     const diagnostics = []
     const originalLines = computeLineStarts(originalCode)
     const sourceLines = originalCode.split("\n")
 
-    const report = (node, message) => {
+    const locate = node => {
         const offset = typeof node.start === "number" ? node.start : 0
         const origin = mapped.origin[offset]
         const location = origin >= 0 ? offsetToLineCol(origin, originalLines) : null
+        return { location, line: location ? location.line + 1 : 0, column: location ? location.column + 1 : 0 }
+    }
+
+    const report = (node, message, meta = {}) => {
+        const { location } = locate(node)
+        const end = typeof node.end === "number" ? mapped.origin[node.end - 1] : null
+        const endLocation = end >= 0 ? offsetToLineCol(end, originalLines) : null
+        const length = location && endLocation?.line === location.line
+            ? Math.max(1, endLocation.column - location.column + 1) : 1
 
         diagnostics.push({
             message,
+            tag: "TypeError",
+            ...meta,
+            ...diagnosticDetails({ tag: "TypeError", code: ERROR_CODES.TYPE, ...meta, message }),
+            file: sourceFile,
+            col: location ? location.column + 1 : 0,
+            length,
             sourceFile,
             line: location ? location.line + 1 : 0,
             column: location ? location.column + 1 : 0,
@@ -897,22 +993,19 @@ export function checkTypes(ast, { mapped, originalCode, sourceFile, imports = []
 
     verify(ast, env, report)
 
+    // Proofs are only worth computing for a module that type-checks.
+    if (diagnostics.length === 0 && checks) {
+        checks.push(...analyzeChecks(ast, env, { locate, elide }))
+    }
+
     diagnostics.sort((a, b) => a.line - b.line || a.column - b.column)
     return diagnostics
 }
 
-export function formatDiagnostics(diagnostics) {
-    return diagnostics.map(({ message, sourceFile, line, column, sourceLine }) => {
-        const text = sourceLine.trim()
-        const indent = sourceLine.length - sourceLine.trimStart().length
-        const pointer = " ".repeat(Math.max(0, column - 1 - indent)) + "^"
-
-        return [
-            `TypeError: ${message}`,
-            `    at ${sourceFile}:${line}:${column}`,
-            "",
-            `  ${text}`,
-            `  ${pointer}`
-        ].join("\n")
-    }).join("\n\n")
+export function formatDiagnostics(diagnostics, options = {}) {
+    return diagnostics.map(diagnostic => formatError({ ...diagnostic,
+        tag: diagnostic.tag ?? "TypeError",
+        file: diagnostic.file ?? diagnostic.sourceFile,
+        col: diagnostic.col ?? diagnostic.column
+    }, options).trimEnd().replace(/^\n/, "")).join("\n\n")
 }
