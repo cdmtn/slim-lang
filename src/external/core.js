@@ -31,8 +31,6 @@ const __RESERVED_DEFINES__ = new Set([
 ])
 export const __custom_types__ = {}
 
-const RELEASE = typeof process !== "undefined" && process.env?.SLIM_RELEASE === "1"
-
 function writeError(text) {
     if (typeof process !== "undefined" && process.stderr) process.stderr.write(text)
     else console.error(text)
@@ -177,57 +175,74 @@ export class Debug {
     }
 }
 
+// Element kinds whose homogeneous arrays are reported as "<kind>[]".
+// "undefined" maps to "null[]"; the empty array is also "null[]".
+const ARRAY_KINDS = {
+    __proto__: null,
+    undefined: "null[]", string: "string[]", int: "int[]", float: "float[]",
+    object: "object[]", enum: "enum[]", struct: "struct[]", array: "array[]"
+}
+
+// One pass over the elements. Tracks whether every element has the same kind
+// and whether every element is a raw JS number (int/float mix, NaN), and stops
+// as soon as neither can still hold. Holes are skipped like Array#every does.
+function arrayKind(arr) {
+    let kind
+    let same = true
+    let numeric = true
+    let seen = false
+    for (let i = 0; i < arr.length; i++) {
+        const element = arr[i]
+        if (element === undefined && !(i in arr)) continue
+        if (numeric && typeof element !== "number") numeric = false
+        if (same) {
+            const k = type(element)
+            if (!seen) { kind = k; seen = true }
+            else if (k !== kind) same = false
+        }
+        if (!same && !numeric) return "array"
+    }
+    if (!seen) return "null[]"
+    if (same) {
+        const label = ARRAY_KINDS[kind]
+        if (label !== undefined) return label
+    }
+    return numeric ? "number[]" : "array"
+}
+
 export function type(obj, properties = {}) {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    const urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/
-
-    const isArray = (obj) => {
-        return typeof obj === "object" && Array.isArray(obj)
+    switch (typeof obj) {
+        case "string": return "string"
+        case "number":
+            if (obj !== obj) return "NaN"
+            return Number.isInteger(obj) ? "int" : "float"
+        case "boolean": return "bool"
+        case "undefined": return "undefined"
+        case "bigint": return "bigint"
+        case "symbol": return "symbol"
     }
-    const isTypedArray = (arr, t) => {
-        return arr.every(element => type(element) === t)
-    }
-    const isTypedOfArray = (arr, t) => {
-        return arr.every(element => typeof element === t)
-    }
-
     if (obj === null) return "null"
-    if (obj === undefined) return "undefined"
-    if (Number.isNaN(obj)) return "NaN"
 
     // The optional DOM layer requires structural element detection.
-    if (obj && typeof obj === "object" && obj.nodeType === 1) return "element"
-    if (obj && obj.nodeType === 11) return "fragment"
-
-    if(typeof obj == "function" && obj.__type__ == true) return "type"
-
-    if (typeof obj == "object" && obj instanceof SlimVariableType) {
-        return obj.kind
+    const nodeType = obj.nodeType
+    if (nodeType !== undefined) {
+        if (nodeType === 1 && typeof obj === "object") return "element"
+        if (nodeType === 11) return "fragment"
     }
 
-    if (typeof obj == "object" && !Array.isArray(obj) && "type" in obj && obj.type == Struct) {
-        return "struct"
+    if (typeof obj === "function") {
+        if (obj.__type__ == true) return "type"
+        if (obj.__component__ == true) return "component"
+        return /^\s*class\s+/.test(obj.toString()) ? "class" : "function"
     }
-    if (typeof obj == "object" && !Array.isArray(obj) && "type" in obj && obj.type instanceof Enum) {
-        return "enum"
-    }
-    if (typeof obj == "object" && !Array.isArray(obj) && obj instanceof EnumValue) {
-        return "enum"
-	}
 
-    if (typeof obj === "function" && obj.__component__ == true) return "component"
+    if (obj instanceof SlimVariableType) return obj.kind
 
-    if (isArray(obj) && isTypedArray(obj, "undefined")) return "null[]"
-    if (isArray(obj) && isTypedArray(obj, "string")) return "string[]"
-    if (isArray(obj) && isTypedArray(obj, "int")) return "int[]"
-    if (isArray(obj) && isTypedArray(obj, "float")) return "float[]"
-    if (isArray(obj) && isTypedArray(obj, "object")) return "object[]"
-    if (isArray(obj) && isTypedOfArray(obj, "number")) return "number[]"
-    if (isArray(obj) && isTypedArray(obj, "enum")) return "enum[]"
-    if (isArray(obj) && isTypedArray(obj, "struct")) return "struct[]"
-    if (isArray(obj) && isTypedArray(obj, "array")) return "array[]"
+    if (Array.isArray(obj)) return arrayKind(obj)
 
-    if (isArray(obj)) return "array"
+    if ("type" in obj && obj.type == Struct) return "struct"
+    if ("type" in obj && obj.type instanceof Enum) return "enum"
+    if (obj instanceof EnumValue) return "enum"
 
     if (obj instanceof Map) return "map"
     if (obj instanceof Set) return "set"
@@ -236,20 +251,7 @@ export function type(obj, properties = {}) {
     if (obj instanceof RegExp) return "regexp"
     if (obj instanceof Error) return "error"
 
-    if (typeof obj === "object" && !Array.isArray(obj)) return "object"
-
-    if (typeof obj === "string") return "string"
-    if (typeof obj === "number" && Number.isInteger(obj)) return "int"
-    if (typeof obj === "number" && !Number.isInteger(obj)) return "float"
-
-    if (typeof obj === "boolean") return "bool"
-    if (typeof obj === "bigint") return "bigint"
-    if (typeof obj === "symbol") return "symbol"
-
-    if (typeof obj === "function" && /^\s*class\s+/.test(obj.toString())) return "class"
-    if (typeof obj == "function") return "function"
-
-    return undefined
+    return "object"
 }
 
 
@@ -277,52 +279,129 @@ export function __type_label__(specification) {
     return refs.map(referenceLabel).join(" | ")
 }
 
-function resolveTypeReference(reference) {
-    if (reference && typeof reference === "object" && reference.__slim_type_ref__) {
-        if (typeof reference.resolve === "function") return reference.resolve()
+// Type checks are compiled once per label into closures. Labels are parsed
+// only at compile time; the hot path never touches strings. Names resolve
+// lazily and are re-resolved only when a definition is registered, so
+// declaration order and cyclic structs behave the same as before.
+let registryVersion = 0
 
-        const name = reference.label.replace(/(?:\[\])+$/, "").split("::")[0]
-        return __custom_types__[name] ?? __structs__[name] ?? __enums__[name]
-    }
-
-    if (typeof reference === "string") {
-        const name = reference.replace(/(?:\[\])+$/, "").split("::")[0]
-        return __custom_types__[name] ?? __structs__[name] ?? __enums__[name]
-    }
-
-    return reference
+function lookupName(name) {
+    return __custom_types__[name] ?? __structs__[name] ?? __enums__[name]
 }
+
+const classCache = new WeakMap()
 
 function isClass(value) {
-    return typeof value === "function" && /^\s*class\s+/.test(Function.prototype.toString.call(value))
+    if (typeof value !== "function") return false
+    let result = classCache.get(value)
+    if (result === undefined) {
+        result = /^\s*class\s+/.test(Function.prototype.toString.call(value))
+        classCache.set(value, result)
+    }
+    return result
 }
 
-function matchesDefinition(definition, value) {
-    if (Array.isArray(definition)) return __type_matches__(definition, value)
+const NEVER = () => false
+const ALWAYS = () => true
+
+// Matches a definition (function, class, spec array or plain value).
+function definitionPredicate(definition) {
+    if (Array.isArray(definition)) {
+        let compiled = null
+        return value => (compiled ??= compileSpec(definition))(value)
+    }
 
     if (typeof definition === "function") {
-        if (isClass(definition)) return value instanceof definition
-        return definition(value) === true
+        if (isClass(definition)) return value => value instanceof definition
+        return value => definition(value) === true
     }
 
-    return isSameType(definition, value)
+    return value => isSameType(definition, value)
 }
 
-function matchesResolvedType(resolved, label, value) {
-    if (resolved === undefined || resolved === null) return false
+const resolvedPredicates = new WeakMap()
 
+function resolvedPredicate(resolved) {
+    if (resolved === null) return NEVER
+
+    const cacheable = typeof resolved === "object" || typeof resolved === "function"
+    if (cacheable) {
+        const cached = resolvedPredicates.get(resolved)
+        if (cached) return cached
+    }
+
+    let predicate
     if (resolved?.type === Struct) {
-        return __typed__(value, resolved, "errorResult").success
+        predicate = structPredicate(resolved)
+    } else if (resolved?.type instanceof Enum) {
+        const members = resolved.values()
+        predicate = value => {
+            for (let i = 0; i < members.length; i++) {
+                if (value === members[i] || (value instanceof EnumValue && value.value === members[i])) return true
+            }
+            return false
+        }
+    } else if (resolved instanceof EnumValue) {
+        predicate = value => resolved === value
+    } else if (typeof resolved === "function" && resolved.__type__ === true) {
+        predicate = value => resolved(value) === true
+    } else {
+        predicate = definitionPredicate(resolved)
     }
 
-    if (resolved?.type instanceof Enum) return resolved.has(value)
-    if (resolved instanceof EnumValue) return resolved === value
+    if (cacheable) resolvedPredicates.set(resolved, predicate)
+    return predicate
+}
 
-    if (typeof resolved === "function" && resolved.__type__ === true) {
-        return resolved(value) === true
+const structPredicates = new WeakMap()
+
+function compileFields(schema) {
+    const fields = Object.entries(schema).map(([name, definition]) => ({
+        name,
+        optional: definition.optional,
+        test: compileSpec(definition.specification)
+    }))
+    return { fields, names: new Set(fields.map(field => field.name)) }
+}
+
+// One predicate per struct: shape, extra keys, optional fields and field types.
+function structPredicate(definition) {
+    let predicate = structPredicates.get(definition)
+    if (predicate) return predicate
+
+    let compiledFor = null
+    let fields = null
+    let names = null
+    predicate = value => {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+
+        const schema = definition.scheme
+        if (compiledFor !== schema) {
+            const compiled = compileFields(schema)
+            fields = compiled.fields
+            names = compiled.names
+            compiledFor = schema
+        }
+
+        // `in schema` also accepts inherited names such as "constructor"; keep that.
+        const keys = Object.keys(value)
+        for (let i = 0; i < keys.length; i++) {
+            if (!names.has(keys[i]) && !(keys[i] in schema)) return false
+        }
+
+        for (let i = 0; i < fields.length; i++) {
+            const field = fields[i]
+            const entry = value[field.name]
+            if (entry === undefined && !(field.name in value)) {
+                if (!field.optional) return false
+                continue
+            }
+            if (!field.test(entry)) return false
+        }
+        return true
     }
-
-    return matchesDefinition(resolved, value)
+    structPredicates.set(definition, predicate)
+    return predicate
 }
 
 const BUILTIN_CLASSES = { Map, Set, Date, Promise, RegExp, Error }
@@ -343,19 +422,53 @@ function splitTypeList(text) {
     return parts
 }
 
-function matchesLabel(label, value) {
-    return __type_matches__(__type_spec__(__type_ref__(label)), value)
+const isIntElement = item => typeof item === "number" && Number.isInteger(item)
+const isStringElement = item => typeof item === "string"
+
+// Primitive tests equivalent to `type(value) === label`. Objects still go
+// through type() because it unwraps SlimVariableType instances.
+function numberViaType(value) {
+    if (typeof value !== "object" || value === null) return false
+    const kind = type(value)
+    return kind === "int" || kind === "float"
 }
 
-function matchesNamedType(label, resolved, value) {
-    if (label === "any") return true
+function primitivePredicate(label) {
+    const viaType = value => typeof value === "object" && value !== null && type(value) === label
+    switch (label) {
+        case "int": return value => typeof value === "number" ? Number.isInteger(value) : viaType(value)
+        case "string": return value => typeof value === "string" || viaType(value)
+        case "float": return value => typeof value === "number" ? !Number.isInteger(value) && !Number.isNaN(value) : viaType(value)
+        case "number": return value => typeof value === "number" ? !Number.isNaN(value) : numberViaType(value)
+        case "bool": return value => typeof value === "boolean" || viaType(value)
+        case "bigint": return value => typeof value === "bigint" || viaType(value)
+        case "symbol": return value => typeof value === "symbol" || viaType(value)
+        case "null": return value => value === null
+        case "undefined": return value => value === undefined
+    }
+    if (label in BUILTIN_CLASSES) return value => value instanceof BUILTIN_CLASSES[label]
+    return value => type(value) === label
+}
+
+// Returns (value, resolved) => boolean. `resolved` is whatever the name
+// resolves to at call time, or undefined when nothing is registered.
+// `test.plain(value)` is the same test for resolved === undefined.
+function compileTest(label) {
+    const test = compileTestBody(label)
+    if (test.plain === undefined) test.plain = value => test(value, undefined)
+    return test
+}
+
+function compileTestBody(label) {
+    if (label === "any") return ALWAYS
 
     if (label.length > 2 && label.startsWith("[") && label.endsWith("]")) {
-        if (!Array.isArray(value)) return false
-
-        const parts = splitTypeList(label.slice(1, -1))
-        if (value.length !== parts.length) return false
-        return parts.every((part, index) => matchesLabel(part, value[index]))
+        const parts = splitTypeList(label.slice(1, -1)).map(labelPredicate)
+        return value => {
+            if (!Array.isArray(value) || value.length !== parts.length) return false
+            for (let i = 0; i < parts.length; i++) if (!parts[i](value[i])) return false
+            return true
+        }
     }
 
     const generic = label.indexOf("<")
@@ -365,62 +478,199 @@ function matchesNamedType(label, resolved, value) {
         const first = args[0] ?? "any"
 
         if (container === "Array") {
-            return Array.isArray(value) && value.every(item => matchesLabel(first, item))
+            const element = labelPredicate(first)
+            const each = item => element(item)
+            return value => Array.isArray(value) && value.every(each)
         }
         if (container === "Set") {
-            return value instanceof Set && [...value].every(item => matchesLabel(first, item))
+            const element = labelPredicate(first)
+            return value => {
+                if (!(value instanceof Set)) return false
+                for (const item of value) if (!element(item)) return false
+                return true
+            }
         }
         if (container === "Map") {
-            const second = args[1] ?? "any"
-            return value instanceof Map && [...value].every(([key, entry]) =>
-                matchesLabel(first, key) && matchesLabel(second, entry))
+            const keyType = labelPredicate(first)
+            const valueType = labelPredicate(args[1] ?? "any")
+            return value => {
+                if (!(value instanceof Map)) return false
+                for (const [key, entry] of value) if (!keyType(key) || !valueType(entry)) return false
+                return true
+            }
         }
-        if (container === "Promise") return value instanceof Promise
+        if (container === "Promise") return value => value instanceof Promise
 
-        return matchesNamedType(container, resolved, value)
+        return compileTest(container)
     }
 
     if (label.endsWith("[]")) {
-        if (!Array.isArray(value)) return false
-
         const elementLabel = label.slice(0, -2)
-        if (value.length === 0) return type(value) === label || elementLabel === "any"
+        const emptyMatches = label === "null[]" || elementLabel === "any"
+        // A failed fast check still defers to type() so wrapped values behave as before.
+        const fallback = elementLabel === "int" ? value => value.every(isIntElement) || type(value) === label
+            : elementLabel === "string" ? value => value.every(isStringElement) || type(value) === label
+            : value => type(value) === label
 
-        if (resolved !== undefined) {
-            return value.every(item => matchesResolvedType(resolved, elementLabel, item))
+        let lastResolved
+        let lastEach
+        const test = (value, resolved) => {
+            if (!Array.isArray(value)) return false
+            if (value.length === 0) return emptyMatches
+            if (resolved === undefined) return fallback(value)
+
+            if (resolved !== lastResolved || lastEach === undefined) {
+                lastEach = resolvedPredicate(resolved)
+                lastResolved = resolved
+            }
+            return value.every(lastEach)
         }
-
-        return type(value) === label
+        test.plain = value => Array.isArray(value) && (value.length === 0 ? emptyMatches : fallback(value))
+        return test
     }
 
     const enumSeparator = label.indexOf("::")
     if (enumSeparator !== -1) {
         const enumName = label.slice(0, enumSeparator)
         const member = label.slice(enumSeparator + 2)
-        const enumDef = resolved ?? __enums__[enumName]
-        return !!enumDef && enumDef[member] === value
+        return (value, resolved) => {
+            const enumDef = resolved ?? __enums__[enumName]
+            return !!enumDef && enumDef[member] === value
+        }
     }
 
-    if (resolved !== undefined) return matchesResolvedType(resolved, label, value)
-    if (label === "number") return type(value) === "int" || type(value) === "float"
-
-    if (label in BUILTIN_CLASSES) return value instanceof BUILTIN_CLASSES[label]
-
-    return type(value) === label
+    const primitive = primitivePredicate(label)
+    let lastResolved
+    let lastPredicate
+    const test = (value, resolved) => {
+        if (resolved === undefined) return primitive(value)
+        if (resolved !== lastResolved || lastPredicate === undefined) {
+            lastPredicate = resolvedPredicate(resolved)
+            lastResolved = resolved
+        }
+        return lastPredicate(value)
+    }
+    test.plain = primitive
+    return test
 }
 
-function matchesReference(reference, value) {
+const labelPredicates = new Map()
+const boundPredicates = new Map()
+
+function nameOfLabel(label) {
+    return label.replace(/(?:\[\])+$/, "").split("::")[0]
+}
+
+// Returns (value, resolve?) => boolean, cached per label. The optional
+// `resolve` thunk comes from the reference and wins over name lookup.
+function labelPredicate(label) {
+    let predicate = labelPredicates.get(label)
+    if (predicate) return predicate
+
+    const test = compileTest(label)
+    const name = nameOfLabel(label)
+    let version = -1
+    let found
+
+    predicate = (value, resolve) => {
+        if (typeof resolve === "function") return test(value, resolve())
+        if (version !== registryVersion) {
+            found = lookupName(name)
+            version = registryVersion
+        }
+        return test(value, found)
+    }
+    labelPredicates.set(label, predicate)
+    return predicate
+}
+
+// Same as labelPredicate(label) with no resolve thunk, flattened to one
+// closure: while the registry is unchanged it calls the final test directly.
+function boundPredicate(label) {
+    let predicate = boundPredicates.get(label)
+    if (predicate) return predicate
+
+    const test = compileTest(label)
+    const name = nameOfLabel(label)
+    let version = -1
+    let current
+
+    predicate = value => {
+        if (version !== registryVersion) {
+            const found = lookupName(name)
+            current = found === undefined ? test.plain : value => test(value, found)
+            version = registryVersion
+        }
+        return current(value)
+    }
+    boundPredicates.set(label, predicate)
+    return predicate
+}
+
+function referencePredicate(reference) {
     const label = typeof reference === "string" ? reference : reference?.label
-    if (!label) return false
-    return matchesNamedType(label, resolveTypeReference(reference), value)
+    if (!label) return NEVER
+
+    const resolve = typeof reference === "string" ? undefined : reference.resolve
+    if (typeof resolve !== "function") return boundPredicate(label)
+
+    const predicate = labelPredicate(label)
+    return value => predicate(value, resolve)
+}
+
+// Compiles a whole specification (union, or intersection when marked) once.
+function compileSpec(specification) {
+    if (specification && specification.__slim_all__) {
+        const all = specification.references.map(referencePredicate)
+        return value => {
+            for (let i = 0; i < all.length; i++) if (!all[i](value)) return false
+            return true
+        }
+    }
+
+    const any = (Array.isArray(specification) ? specification : [specification]).map(referencePredicate)
+    if (any.length === 1) return any[0]
+    return value => {
+        for (let i = 0; i < any.length; i++) if (any[i](value)) return true
+        return false
+    }
+}
+
+let lastBoundLabel = ""
+let lastBound = NEVER
+
+function matchesReference(reference, value) {
+    let label = reference
+    if (typeof reference !== "string") {
+        label = reference?.label
+        if (!label) return false
+        const resolve = reference.resolve
+        if (typeof resolve === "function") return labelPredicate(label)(value, resolve)
+    }
+
+    if (label !== lastBoundLabel) {
+        lastBound = boundPredicate(label)
+        lastBoundLabel = label
+    }
+    return lastBound(value)
 }
 
 export function __type_matches__(specification, value) {
-    if (specification && specification.__slim_all__) {
-        return specification.references.every(reference => matchesReference(reference, value))
+    if (Array.isArray(specification)) {
+        if (specification.length === 1) return matchesReference(specification[0], value)
+        for (let i = 0; i < specification.length; i++) {
+            if (matchesReference(specification[i], value)) return true
+        }
+        return false
     }
-    const references = Array.isArray(specification) ? specification : [specification]
-    return references.some(reference => matchesReference(reference, value))
+    if (specification !== null && typeof specification === "object" && specification.__slim_all__) {
+        const references = specification.references
+        for (let i = 0; i < references.length; i++) {
+            if (!matchesReference(references[i], value)) return false
+        }
+        return true
+    }
+    return matchesReference(specification, value)
 }
 
 function previewValue(value) {
@@ -449,11 +699,16 @@ function typeError(varName, expected, value, action = "assigned") {
 
 const guardedValues = new WeakMap()
 const scopedVariableTypes = new WeakMap()
+const VARIABLE_TYPE = Symbol("slim.variableType")
 const typedStaticFields = new WeakMap()
 
+// Bindings are plain objects created per scope, so the declared
+// specification lives on the binding itself; non-extensible ids fall back to
+// a WeakMap. Only the specification is stored: labels are built on failure.
 function setVariableType(bindingId, definition) {
     if (bindingId && (typeof bindingId === "object" || typeof bindingId === "function")) {
-        scopedVariableTypes.set(bindingId, definition)
+        if (Object.isExtensible(bindingId)) bindingId[VARIABLE_TYPE] = definition
+        else scopedVariableTypes.set(bindingId, definition)
     } else {
         SlimVariableTypes[bindingId] = definition
     }
@@ -461,7 +716,7 @@ function setVariableType(bindingId, definition) {
 
 function getVariableType(bindingId) {
     if (bindingId && (typeof bindingId === "object" || typeof bindingId === "function")) {
-        return scopedVariableTypes.get(bindingId)
+        return bindingId[VARIABLE_TYPE] ?? scopedVariableTypes.get(bindingId)
     }
     return SlimVariableTypes[bindingId]
 }
@@ -476,13 +731,56 @@ function getStaticFieldType(owner, field) {
     return typedStaticFields.get(owner)?.get(field)
 }
 
-function guardTypedValue(value, specification, varName) {
-    if (!value || typeof value !== "object" || !__type_matches__(specification, value)) return value
-    if (__type_label__(specification) === "any") return value
-    if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) return value
+// "any" is the only label the guard skips; it is a single-member specification.
+function isAnySpecification(specification) {
+    const references = specification && specification.__slim_all__
+        ? specification.references
+        : Array.isArray(specification) ? specification : [specification]
+    return references.length === 1 && referenceLabel(references[0]) === "any"
+}
 
-    const cached = guardedValues.get(value)
-    if (cached?.has(specification)) return cached.get(specification)
+// A specification that guards one value keeps that guard on itself, so the
+// common case (a fresh specification per declaration) never touches a
+// WeakMap. The first time it sees a second value the single entry moves into
+// guardedValues, which then keeps the per-value cache exactly as before.
+const GUARD_SLOT = Symbol("slim.guard")
+const GUARD_SHARED = Symbol("slim.guard.shared")
+
+function cachedGuard(value, specification) {
+    if (specification !== null && typeof specification === "object") {
+        const slot = specification[GUARD_SLOT]
+        if (slot !== undefined && slot !== GUARD_SHARED) {
+            if (slot.target === value) return slot.proxy
+            const entries = guardedValues.get(slot.target) ?? new Map()
+            entries.set(specification, slot.proxy)
+            guardedValues.set(slot.target, entries)
+            specification[GUARD_SLOT] = GUARD_SHARED
+        }
+    }
+    return guardedValues.get(value)?.get(specification)
+}
+
+function storeGuard(value, specification, proxy) {
+    if (specification !== null && typeof specification === "object" && Object.isExtensible(specification)) {
+        const slot = specification[GUARD_SLOT]
+        if (slot === undefined) {
+            specification[GUARD_SLOT] = { target: value, proxy }
+            return
+        }
+    }
+    const entries = guardedValues.get(value) ?? new Map()
+    entries.set(specification, proxy)
+    guardedValues.set(value, entries)
+}
+
+// Callers have already matched `value` against `specification`.
+function guardTypedValue(value, specification, varName) {
+    if (!value || typeof value !== "object") return value
+    if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) return value
+    if (isAnySpecification(specification)) return value
+
+    const cached = cachedGuard(value, specification)
+    if (cached) return cached
 
     const restore = (target, property, descriptor) => {
         if (descriptor) Reflect.defineProperty(target, property, descriptor)
@@ -517,9 +815,7 @@ function guardTypedValue(value, specification, varName) {
         }
     })
 
-    const entries = cached ?? new Map()
-    entries.set(specification, proxy)
-    guardedValues.set(value, entries)
+    storeGuard(value, specification, proxy)
     return proxy
 }
 
@@ -547,25 +843,39 @@ export function __def_struct__(name, schema, specifications = {}, defaults = {},
         }
     })
 
+    // verify, verifySafe and new share one compiled predicate; the slow
+    // __typed__ pass only runs to explain a failure.
+    let check = null
+    const defaultKeys = Object.keys(mergedDefaults)
+    const hasMethods = Object.keys(mergedMethods).length > 0
     const definition = {
         type: Struct,
         name,
         scheme: schemeArray,
         __defaults__: mergedDefaults,
         __methods__: mergedMethods,
-        verify: object => __typed__(object, definition),
-        verifySafe: object => __typed__(object, definition, "errorResult"),
+        verify: object => check(object) ? object : __typed__(object, definition),
+        verifySafe: object => check(object) ? { success: true, result: object } : __typed__(object, definition, "errorResult"),
         new: (values = {}) => {
-            const filled = {}
-            for (const key of Object.keys(mergedDefaults)) {
-                if (!(key in values)) filled[key] = mergedDefaults[key]()
+            let merged
+            if (defaultKeys.length === 0) {
+                merged = { ...values }
+            } else {
+                const filled = {}
+                for (let i = 0; i < defaultKeys.length; i++) {
+                    const key = defaultKeys[i]
+                    if (!(key in values)) filled[key] = mergedDefaults[key]()
+                }
+                merged = { ...filled, ...values }
             }
-            const data = __typed__({ ...filled, ...values }, definition)
-            return Object.keys(mergedMethods).length ? Object.assign(Object.create(mergedMethods), data) : data
+            const data = check(merged) ? merged : __typed__(merged, definition)
+            return hasMethods ? Object.assign(Object.create(mergedMethods), data) : data
         }
     }
 
+    check = structPredicate(definition)
     __structs__[name] = definition
+    registryVersion++
     if (__RESERVED_DEFINES__.has(name)) throw new StructError(`Name "${name}" is reserved`)
     globalThis[name] = definition
     return definition
@@ -589,26 +899,20 @@ export function __def_enum__(name, schema) {
     })
 
     __enums__[name] = definition
+    registryVersion++
     if (__RESERVED_DEFINES__.has(name)) throw new EnumError(`Name "${name}" is reserved`)
     globalThis[name] = definition
     return definition
 }
 
 export function __typed_variable__(value, specification, bindingId, varName = bindingId) {
-    if (RELEASE) return value
-    const expected = __type_label__(specification)
-    if (!__type_matches__(specification, value)) typeError(varName, expected, value)
+    if (!__type_matches__(specification, value)) typeError(varName, __type_label__(specification), value)
 
-    setVariableType(bindingId, {
-        expected: specification,
-        label: expected,
-        name: varName
-    })
+    setVariableType(bindingId, specification)
     return guardTypedValue(value, specification, varName)
 }
 
 export function __typed_return__(value, specification, fnName) {
-    if (RELEASE) return value
 
     if (!__type_matches__(specification, value)) {
         throw new TypeError(
@@ -619,7 +923,6 @@ export function __typed_return__(value, specification, fnName) {
 }
 
 export function __typed_pattern__(value, typeLabel) {
-    if (RELEASE) return value
     if (!__type_matches__(typeLabel, value)) {
         throw new TypeError(`destructured value does not match type ${typeLabel}: ${previewValue(value)}`)
     }
@@ -627,52 +930,39 @@ export function __typed_pattern__(value, typeLabel) {
 }
 
 export function __typed_variable_check__(bindingId, value, varName = bindingId) {
-    if (RELEASE) return value
-    const typed = getVariableType(bindingId)
-    if (!typed) return value
-    if (!__type_matches__(typed.expected, value)) typeError(varName, typed.label, value, "redefined")
-    return guardTypedValue(value, typed.expected, varName)
+    const expected = getVariableType(bindingId)
+    if (!expected) return value
+    if (!__type_matches__(expected, value)) typeError(varName, __type_label__(expected), value, "redefined")
+    return guardTypedValue(value, expected, varName)
 }
 
 export function __typed_parameter__(value, specification, bindingId, varName, optional, message) {
-    if (RELEASE) return value
     if (optional && (value === undefined || value === null)) {
-        setVariableType(bindingId, {
-            expected: specification,
-            label: __type_label__(specification),
-            name: varName
-        })
+        setVariableType(bindingId, specification)
         return value
     }
 
     if (!__type_matches__(specification, value)) {
-        throw new ArgumentDeclarationTypeError(message, { skipUserFrames: 1 })
+        throw new ArgumentDeclarationTypeError(typeof message === "function" ? message() : message, { skipUserFrames: 1 })
     }
 
-    setVariableType(bindingId, {
-        expected: specification,
-        label: __type_label__(specification),
-        name: varName
-    })
+    setVariableType(bindingId, specification)
     return guardTypedValue(value, specification, varName)
 }
 
 export function __typed_static_field__(owner, field, value, specification, displayName) {
-    if (RELEASE) return value
-    const label = __type_label__(specification)
-    if (!__type_matches__(specification, value)) typeError(displayName, label, value)
-    setStaticFieldType(owner, field, { expected: specification, label })
+    if (!__type_matches__(specification, value)) typeError(displayName, __type_label__(specification), value)
+    setStaticFieldType(owner, field, specification)
     return guardTypedValue(value, specification, displayName)
 }
 
 export function __typed_static_field_check__(owner, field, value, displayName) {
-    if (RELEASE) return value
-    const definition = getStaticFieldType(owner, field)
-    if (!definition) return value
-    if (!__type_matches__(definition.expected, value)) {
-        typeError(displayName, definition.label, value, "redefined")
+    const expected = getStaticFieldType(owner, field)
+    if (!expected) return value
+    if (!__type_matches__(expected, value)) {
+        typeError(displayName, __type_label__(expected), value, "redefined")
     }
-    return guardTypedValue(value, definition.expected, displayName)
+    return guardTypedValue(value, expected, displayName)
 }
 
 export function __argument_typed__(value, expectedType) {
@@ -681,15 +971,17 @@ export function __argument_typed__(value, expectedType) {
 
 export function __type_def__(name, definition, properties = {}) {
     const inherited = properties.extends ?? null
+    const matchesBase = definitionPredicate(definition)
     const customType = value => {
         if (inherited && !__type_matches__(inherited, value)) return false
-        return matchesDefinition(definition, value)
+        return matchesBase(value)
     }
 
     customType.__type__ = true
     customType.__slim_type_name__ = name
     customType.value = definition
     __custom_types__[name] = customType
+    registryVersion++
     return customType
 }
 
@@ -706,6 +998,10 @@ export function __typed__(value, structName, returnMethod = "default") {
     const name = typeof structName === "string" ? structName : structName?.name
     const structDef = typeof structName === "string" ? __structs__[structName] : structName
     if (!structDef) throw new StructError(`Unknown struct "${structName}"`)
+
+    if (structPredicate(structDef)(value)) {
+        return returnMethod === "errorResult" ? { success: true, result: value } : value
+    }
 
     const fail = (error, properties = {}) => {
         if (returnMethod === "errorResult") {

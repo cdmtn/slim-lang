@@ -30,12 +30,24 @@ export function projectPackagesDir() {
     return projectPackagesCache
 }
 
-let distDirCache = null
-export function distDirName() {
-    if (distDirCache) return distDirCache
+export const RELEASE_DIST_SUFFIX = "-release"
 
-    distDirCache = configName("dist", "slim-dist")
-    return distDirCache
+// A release build is a different program (no checks are emitted), so it gets its own
+// output folder and never overwrites the dev build.
+export function isReleaseBuild() {
+    return process.env.SLIM_RELEASE === "1"
+}
+
+let baseDistCache = null
+export function baseDistDirName() {
+    if (baseDistCache) return baseDistCache
+
+    baseDistCache = configName("dist", "slim-dist")
+    return baseDistCache
+}
+
+export function distDirName() {
+    return isReleaseBuild() ? baseDistDirName() + RELEASE_DIST_SUFFIX : baseDistDirName()
 }
 
 function packageRoots() {

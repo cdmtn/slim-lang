@@ -77,6 +77,47 @@ function getMemberName(member) {
     return null
 }
 
+const KEEP_CHECKS = /@keep-checks\b/
+
+// A `//@keep-checks` comment on a function, method, class or statement keeps every
+// check inside it in release builds (use it on boundaries that take external data).
+function isCheckKept(path_) {
+    let current = path_
+    while (current) {
+        const comments = current.node?.leadingComments
+        if (comments?.some(comment => KEEP_CHECKS.test(comment.value))) return true
+        current = current.parentPath
+    }
+    return false
+}
+
+// Release builds never emit the check wrappers: the parser marks are unwrapped here,
+// after the static checker and the jsdoc/declaration passes have consumed them.
+// Structs and `type` definitions are data and are left for instrumentRuntimeTypes.
+function eraseRuntimeChecks(ast) {
+    traverse(ast, {
+        VariableDeclarator(path_) {
+            const { init } = path_.node
+            if (!isRuntimeCall(init, "__typed_variable__") && !isRuntimeCall(init, "__typed_pattern__")) return
+            if (isCheckKept(path_)) return
+            path_.get("init").replaceWith(init.arguments[0])
+        },
+
+        ClassProperty(path_) {
+            const { value } = path_.node
+            if (!isRuntimeCall(value, "__typed_variable__") || isCheckKept(path_)) return
+            path_.get("value").replaceWith(value.arguments[0])
+        },
+
+        ExpressionStatement(path_) {
+            const call = path_.node.expression
+            if (!isRuntimeCall(call, "__typed_parameter__") && !isRuntimeCall(call, "__declare_return__")) return
+            if (isCheckKept(path_)) return
+            path_.remove()
+        }
+    })
+}
+
 function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
     const typedBindings = new Map()
     const staticFields = new Map()
@@ -635,6 +676,7 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
     const declarations = options.declarations ? emitDeclarations(ast) : null
     const typedefs = options.jsdoc ? emitJsDoc(ast) : []
 
+    if (options.release) eraseRuntimeChecks(ast)
     instrumentRuntimeTypes(ast, sourceFile, importedNames)
 
     const runtimePath = getRuntimePath(sourceFile, usesDom(ast) ? "defaults.js" : "core.js")

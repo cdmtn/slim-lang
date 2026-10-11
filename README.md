@@ -485,16 +485,38 @@ Static checks run before runtime validation. Disable them with `slmc build --no-
 
 ## Release Mode
 
-Typed variables, parameters, and struct fields are validated at runtime by default. Production builds can remove those implicit checks while keeping explicit `struct.verify()` calls, operators, and `lock`:
+Typed variables, parameters, return types and static fields are validated at runtime in a dev build. A release build
+erases those checks at compile time: `let x: int = a` becomes `let x = a`, `-> T` leaves a plain `return`, and no
+argument checks are emitted. The annotations stay in JSDoc and `.d.ts` output, and the static checker still runs.
 
 ```console
+slmc build --release
 slmc run --release
 ```
 
-This sets `SLIM_RELEASE=1`. You can use the same variable when running compiled output directly:
+A release build is written to `<dist>-release` (`slim-dist-release` by default), so it never overwrites the dev build in
+`slim-dist`. `SLIM_RELEASE=1` is the same switch and produces the same build:
 
 ```console
-SLIM_RELEASE=1 node dist/index.js
+SLIM_RELEASE=1 slmc build
+node slim-dist-release/index.js
+```
+
+Structs and `type` definitions are data and are not erased. `Struct.verify`, `verifySafe`, `Struct.new`, `kindof`,
+operators and `lock` work exactly as in dev. Setting `SLIM_RELEASE` when running an already compiled dev build no longer
+changes anything; build with `--release` instead.
+
+To keep checks on one boundary (a function that receives external data), put `//@keep-checks` before it. Everything
+inside that function, method, class or statement stays checked:
+
+```
+//@keep-checks
+func handleRequest(body: Request) -> Response {
+    let id: int = body.id
+    return render(id)
+}
+
+func render(id: int) -> Response { ... }   // no checks in release
 ```
 
 ## TypeScript-Compatible Types (JSDoc)

@@ -323,7 +323,7 @@ function buildTypedArgsResult(parsedArgs, fnName) {
                 ? `${fnName}: argument "${a.name}" expected ${expected}`
                 : `function "${fnName}": argument<${i}> "${a.name}" expected ${expected}`
 
-            return `__typed_parameter__(${a.name}, "${a.type}", "${a.name}", ${a.optional}, \`${message}, got \${type(${a.name})}\`)`
+            return `__typed_parameter__(${a.name}, "${a.type}", "${a.name}", ${a.optional}, () => \`${message}, got \${type(${a.name})}\`)`
         })
         .join("\n    ")
 
