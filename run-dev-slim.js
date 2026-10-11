@@ -13,7 +13,9 @@ const config = JSON.parse(
 );
 
 const distName = (config.names && config.names.dist) ?? config.dist;
-const distDir = typeof distName === "string" && distName.trim() ? distName : "slim-dist";
+const baseDist = typeof distName === "string" && distName.trim() ? distName : "slim-dist";
+// Release builds are written next to the dev build, see isReleaseBuild() in src/modulePaths.js.
+const distDir = process.env.SLIM_RELEASE === "1" ? baseDist + "-release" : baseDist;
 const entry = `${distDir}/${config.main}.js`;
 const hot = process.argv.includes("--hot");
 
@@ -116,7 +118,7 @@ async function rebuild() {
 await rebuild();
 
 const watchTarget = config.watch ?? ".";
-const ignoreDirs = new RegExp(`(^|[\\\\/])(node_modules|${distDir}|\\.git)([\\\\/]|$)`);
+const ignoreDirs = new RegExp(`(^|[\\\\/])(node_modules|${baseDist}|${distDir}|\\.git)([\\\\/]|$)`);
 
 const watcher = chokidar.watch(watchTarget, {
     ignoreInitial: true,
