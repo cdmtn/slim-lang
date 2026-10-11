@@ -1,0 +1,6 @@
+export component Badge(props) {
+    return <span class="badge">${props.label}</span>
+}
+export component Card(props) {
+    return <div class="card"><h1>${props.title}</h1><Badge label=${props.tag} /></div>
+}

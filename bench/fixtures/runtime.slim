@@ -1,0 +1,94 @@
+export struct Tag { name: string }
+export struct Flat {
+    name: string
+    id: int
+    active: bool
+}
+export struct User {
+    name: string
+    id: int
+    roles: string[]
+    tags: Tag[]
+}
+export struct Team {
+    title: string
+    lead: User
+    members: User[]
+}
+export enum Color {
+    Red: 0
+    Green: 1
+    Blue: 2
+}
+
+export func typedAdd(a: int, b: int) -> int { return a + b }
+export func plainAdd(a, b) { return a + b }
+
+export func loopLetTyped(n) {
+    let s = 0
+    for (let i = 0; i < n; i++) { let x: int = i; s += x }
+    return s
+}
+export func loopLetPlain(n) {
+    let s = 0
+    for (let i = 0; i < n; i++) { let x = i; s += x }
+    return s
+}
+export func loopLetArray(n) {
+    let s = 0
+    for (let i = 0; i < n; i++) { let a: int[] = [1, 2, 3]; s += a.length }
+    return s
+}
+export func loopLetStruct(list) {
+    let s = 0
+    for (const d of list) { let o: User = d; s += o.id }
+    return s
+}
+export func loopTypedCall(n) {
+    let s = 0
+    for (let i = 0; i < n; i++) s = typedAdd(i, 1)
+    return s
+}
+export func loopPlainCall(n) {
+    let s = 0
+    for (let i = 0; i < n; i++) s = plainAdd(i, 1)
+    return s
+}
+export func loopKind(list) {
+    let s = 0
+    for (const v of list) { s += (kindof v).length }
+    return s
+}
+export func loopMatchEnum(n) {
+    let s = 0
+    const vals = Color.values()
+    for (let i = 0; i < n; i++) {
+        const c = vals[i % 3]
+        s += match (c) { Color.Red => 1, Color.Green => 2, _ => 3 }
+    }
+    return s
+}
+export func loopMatchValue(n) {
+    let s = 0
+    for (let i = 0; i < n; i++) {
+        s += match (i % 4) { 0 => 1, 1 => 2, 2 => 3, _ => 4 }
+    }
+    return s
+}
+export func guardedWrite(o, n) {
+    let g: User = o
+    for (let i = 0; i < n; i++) g.id = i
+    return g.id
+}
+export func plainWrite(o, n) {
+    for (let i = 0; i < n; i++) o.id = i
+    return o.id
+}
+export func guardedBadWrite(o, n) {
+    let g: User = o
+    let failed = 0
+    for (let i = 0; i < n; i++) {
+        try { g.id = "x" } catch (e) { failed++ }
+    }
+    return failed
+}

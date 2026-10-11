@@ -15,7 +15,8 @@
 		"release:patch": "npm version patch && git push --follow-tags && npm publish",
 		"release:minor": "npm version minor && git push --follow-tags && npm publish",
 		"release:major": "npm version major && git push --follow-tags && npm publish",
-		"test": "node --test"
+		"test": "node --test",
+		"bench": "node bench/run.js"
 	},
 	"files": [
 		"packages",
