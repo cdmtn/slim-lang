@@ -25,6 +25,21 @@ declare const PI: number
 declare class Struct {}
 declare class Component {}
 declare class Type {}
+declare class Result<T, E> {
+    readonly ok: boolean
+    readonly value?: T
+    readonly error?: E
+    isOk(): boolean
+    isErr(): boolean
+    unwrap(): T
+    unwrapOr<U>(fallback: U): T | U
+    map<U>(fn: (value: T) => U): Result<U, E>
+    mapErr<F>(fn: (error: E) => F): Result<T, F>
+    andThen<U, F>(fn: (value: T) => Result<U, F>): Result<U, E | F>
+}
+declare function Ok<T>(value: T): Result<T, never>
+declare function Err<E>(error: E): Result<never, E>
+declare function __result_expect__<T, E>(value: Result<T, E>): Result<T, E>
 declare class HTMLElement {}
 
 declare function __def_struct__(name: string, schema: any, specifications?: any, defaults?: any, extendsName?: any, methods?: any): any
@@ -39,7 +54,7 @@ declare function __typed_static_field__<T>(owner: any, field: any, value: T, spe
 declare function __typed_static_field_check__<T>(owner: any, field: any, value: T, displayName?: any): T
 
 declare function __type_def__(name: string, definition: any, properties?: any): any
-declare function __type_ref__(label: string, resolve?: any): any
+declare function __type_ref__(label: string, resolve?: any, parameters?: any[]): any
 declare function __type_spec__(...references: any[]): any
 declare function __type_spec_all__(...references: any[]): any
 declare function __type_matches__(specification: any, value: any): boolean
