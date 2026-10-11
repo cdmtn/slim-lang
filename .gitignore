@@ -9,3 +9,4 @@ todo.md
 /packages/*
 !/packages/slim/
 spm.lock.json
+target/

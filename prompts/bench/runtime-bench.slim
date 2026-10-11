@@ -1,0 +1,35 @@
+struct Tag { name: string }
+struct User {
+    name: string
+    id: int
+    roles: string[]
+    tags: Tag[]
+}
+const N = 100000
+const data = []
+for (let i = 0; i < N; i++) data.push({ name: "u" + i, id: i, roles: ["a", "b", "c"], tags: [{ name: "x" }, { name: "y" }] })
+
+function bench(label, fn) {
+    fn()
+    const t = performance.now()
+    fn()
+    const ms = performance.now() - t
+    console.log(label.padEnd(34), ms.toFixed(1).padStart(8), "ms", (ms * 1e6 / N).toFixed(0).padStart(7), "ns/obj")
+}
+bench("User.verify", () => { for (const d of data) User.verify(d) })
+bench("User.verifySafe", () => { for (const d of data) User.verifySafe(d) })
+bench("User.new", () => { for (const d of data) User.new(d) })
+bench("handwritten predicate", () => {
+    for (const d of data) {
+        if (!(typeof d.name === "string" && Number.isInteger(d.id) && Array.isArray(d.roles) && d.roles.every(r => typeof r === "string") && Array.isArray(d.tags) && d.tags.every(t => typeof t.name === "string"))) throw 1
+    }
+})
+bench("let x: int = i", () => { for (let i = 0; i < N; i++) { let x: int = i } })
+bench("let x = i (plain)", () => { for (let i = 0; i < N; i++) { let x = i } })
+bench("let o: User = d (Proxy guard)", () => { for (const d of data) { let o: User = d } })
+bench("let a: int[] = [1,2,3]", () => { for (let i = 0; i < N; i++) { let a: int[] = [1, 2, 3] } })
+bench("type([1,2,3]) x1", () => { for (let i = 0; i < N; i++) type([1, 2, 3]) })
+func addT(a: int, b: int) -> int { return a + b }
+func addP(a, b) { return a + b }
+bench("typed func call", () => { let s = 0; for (let i = 0; i < N; i++) s = addT(i, 1) })
+bench("plain func call", () => { let s = 0; for (let i = 0; i < N; i++) s = addP(i, 1) })

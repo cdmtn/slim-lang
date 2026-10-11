@@ -398,6 +398,24 @@ Reindent Slim source (strings, templates, and comments are left untouched):
 slmc fmt index
 ```
 
+## Benchmark
+
+`npm run bench` runs the built-in harness for the compiler (lexer, parser, checker, transform, source maps,
+formatter) and the runtime (structs, typed bindings, `kindof`, `match`, Proxy guards, components, start-up, sizes),
+each runtime case in dev and release (`SLIM_RELEASE=1`, compiled without checks) mode, in isolated processes. It is separate from `npm test`.
+
+```sh
+npm run bench -- --list
+npm run bench -- --quick
+npm run bench -- --hard --filter struct --save before
+npm run bench -- --hard --filter struct --compare before
+```
+
+Every result is verified after timing; a wrong result is a failure. The JSON report
+(`target/bench/benchmark.json`) has `completed`, `failure`, `verified` and `unsupported`.
+Dev numbers are not release numbers. Timing boundaries, comparison rules and flags:
+[docs/benchmark.md](docs/benchmark.md).
+
 ## REPL
 
 Bindings persist between REPL lines:
