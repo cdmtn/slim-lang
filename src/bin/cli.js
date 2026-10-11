@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url"
 import { log, error, parseValue } from "./helpers.js"
 import { runTests } from "../test-runner.js"
 import { formatFile } from "../format.js"
+import { ERROR_EXPLANATIONS } from "../external/errors/explain.js"
 
 import pkg from "../../package.json" with { type: "json" };
 import defaultConfig from "./config.default.json" with { type: "json" };
@@ -69,17 +70,40 @@ program
     .version(pkg.version);
 
 program
+    .command("explain <code>")
+    .description("Explain a Slim diagnostic code (for example S0001)")
+    .action((code) => {
+        if (!Object.hasOwn(ERROR_EXPLANATIONS, code)) {
+            console.error(`Unknown Slim error code "${code}". Available: ${Object.keys(ERROR_EXPLANATIONS).join(", ")}`)
+            process.exitCode = 1
+            return
+        }
+        console.log(ERROR_EXPLANATIONS[code])
+    });
+
+program
     .command("build")
     .description("Build a Slim project")
     .option("-S, --silent", "Build without log")
     .option("--no-check", "Build without static type checking")
+    .option("--explain-checks", "List every runtime type check that was kept or removed, with its position")
+    .option("--clean", "Delete the output directory and its build cache, then build from scratch")
+    .option("--no-cache", "Ignore the incremental build cache and recompile every module")
+    .option("--stats", "Print how many modules were compiled and how many came from the cache")
     .action((params) => {
         slimConfigCheck()
 
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
 
+        const flags = [
+            params.explainChecks && "--explain-checks",
+            params.clean && "--clean",
+            params.cache === false && "--no-cache",
+            params.stats && "--stats",
+        ].filter(Boolean).join(" ")
+
         if(!params.silent) log("Building...")
-        execSync(`node ${compileScript}`, { stdio: "inherit" });
+        execSync(`node ${compileScript} ${flags}`, { stdio: "inherit" });
         if(!params.silent) log("Ready!")
     });
 
