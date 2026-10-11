@@ -16,10 +16,13 @@ export function stripComments(code) {
     return tokenize(code).map(token => token.type === "comment" ? "" : token.value).join("")
 }
 
+const KEEP_CHECKS_COMMENT = /^\/\/\s*@keep-checks\b/
+
 function commentEdits(code) {
     const edits = []
     for (const token of tokenize(code)) {
-        if (token.type === "comment") {
+        // `//@keep-checks` survives so transform can keep checks on that boundary in release.
+        if (token.type === "comment" && !KEEP_CHECKS_COMMENT.test(token.value)) {
             edits.push({ start: token.start, end: token.end, replacement: "" })
         }
     }

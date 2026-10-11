@@ -31,8 +31,6 @@ const __RESERVED_DEFINES__ = new Set([
 ])
 export const __custom_types__ = {}
 
-const RELEASE = typeof process !== "undefined" && process.env?.SLIM_RELEASE === "1"
-
 function writeError(text) {
     if (typeof process !== "undefined" && process.stderr) process.stderr.write(text)
     else console.error(text)
@@ -595,7 +593,6 @@ export function __def_enum__(name, schema) {
 }
 
 export function __typed_variable__(value, specification, bindingId, varName = bindingId) {
-    if (RELEASE) return value
     const expected = __type_label__(specification)
     if (!__type_matches__(specification, value)) typeError(varName, expected, value)
 
@@ -608,8 +605,6 @@ export function __typed_variable__(value, specification, bindingId, varName = bi
 }
 
 export function __typed_return__(value, specification, fnName) {
-    if (RELEASE) return value
-
     if (!__type_matches__(specification, value)) {
         throw new TypeError(
             `function "${fnName}" must return ${__type_label__(specification)}, got ${type(value)}: ${previewValue(value)}`
@@ -619,7 +614,6 @@ export function __typed_return__(value, specification, fnName) {
 }
 
 export function __typed_pattern__(value, typeLabel) {
-    if (RELEASE) return value
     if (!__type_matches__(typeLabel, value)) {
         throw new TypeError(`destructured value does not match type ${typeLabel}: ${previewValue(value)}`)
     }
@@ -627,7 +621,6 @@ export function __typed_pattern__(value, typeLabel) {
 }
 
 export function __typed_variable_check__(bindingId, value, varName = bindingId) {
-    if (RELEASE) return value
     const typed = getVariableType(bindingId)
     if (!typed) return value
     if (!__type_matches__(typed.expected, value)) typeError(varName, typed.label, value, "redefined")
@@ -635,7 +628,6 @@ export function __typed_variable_check__(bindingId, value, varName = bindingId) 
 }
 
 export function __typed_parameter__(value, specification, bindingId, varName, optional, message) {
-    if (RELEASE) return value
     if (optional && (value === undefined || value === null)) {
         setVariableType(bindingId, {
             expected: specification,
@@ -658,7 +650,6 @@ export function __typed_parameter__(value, specification, bindingId, varName, op
 }
 
 export function __typed_static_field__(owner, field, value, specification, displayName) {
-    if (RELEASE) return value
     const label = __type_label__(specification)
     if (!__type_matches__(specification, value)) typeError(displayName, label, value)
     setStaticFieldType(owner, field, { expected: specification, label })
@@ -666,7 +657,6 @@ export function __typed_static_field__(owner, field, value, specification, displ
 }
 
 export function __typed_static_field_check__(owner, field, value, displayName) {
-    if (RELEASE) return value
     const definition = getStaticFieldType(owner, field)
     if (!definition) return value
     if (!__type_matches__(definition.expected, value)) {
