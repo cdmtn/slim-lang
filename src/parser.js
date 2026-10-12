@@ -11,6 +11,7 @@ import {
 import { parseComponentsEdits } from "./handlers/parser/components.js"
 import { createMapped, applyEdits } from "./sourcemap.js"
 import { tokenize } from "./lexer.js"
+import { operatorSyntaxEdits } from "./operatorSyntax.js"
 
 export function stripComments(code) {
     return tokenize(code).map(token => token.type === "comment" ? "" : token.value).join("")
@@ -26,7 +27,7 @@ function commentEdits(code) {
     return edits
 }
 
-const EXPRESSION_ENDS = new Set([")", "]", "}", "`", "++", "--"])
+const EXPRESSION_ENDS = new Set([")", "]", "}", "`", "++", "--", "?"])
 
 function endsExpression(token) {
     if (!token) return false
@@ -124,7 +125,7 @@ function extractExprForwardLocal(str, startPos) {
 
         if (depth === 0) {
             const two = str.slice(i, i + 2)
-            if (["==", "!=", ">=", "<=", "&&", "||", "??"].includes(two)) break
+            if (["==", "!=", ">=", "<=", "&&", "||", "??", "|>"].includes(two)) break
             if (["+", "-", "*", "/", "%", "<", ">", "?", ":", ";", ",", "\n"].includes(ch)) break
         }
 
@@ -713,7 +714,7 @@ function structuralEdits(text) {
         )
 
         collect(
-            /(\w[\w$.]*(?:\[.*?\])?)\s*(?:=>\s*([\w$]+))?\s*\n((?:\s*\|(?!\|)[^\n]+\n?)+)/g,
+            /(\w[\w$.]*(?:\[.*?\])?)\s*(?:=>\s*([\w$]+))?\s*\n((?:\s*\|(?![|>])[^\n]+\n?)+)/g,
             (match, source, alias, pipes) => {
                 const steps = [...pipes.matchAll(/\|\s*([\w$]+)\(([^)]*)\)/g)]
                 if (steps.length === 0) return match
@@ -798,6 +799,8 @@ export function preprocess(code, sourceFile = "index.slim") {
     mapped = applyEdits(mapped, functionEdits(mapped.text))
 
     mapped = applyEdits(mapped, structuralEdits(mapped.text))
+
+    mapped = applyEdits(mapped, operatorSyntaxEdits(mapped.text))
 
     return { code: mapped.text, mapped, source: sourceFile }
 }
