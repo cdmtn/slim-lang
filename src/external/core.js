@@ -8,7 +8,11 @@ import {
     SlimVariableType, SlimVariableTypes, Struct, Component, Enum, EnumValue,
     isSameType
 } from "./types.js"
-import { formatError, resolveErrorLocation } from "./classErrors.js"
+import { formatError } from "./classErrors.js"
+import { ERROR_CODES, diagnosticDetails, withDiagnostic } from "./errors/index.js"
+import { jsonLocations, jsonPosition, jsonSyntaxPosition } from "./jsonLocations.js"
+import { Result, Ok, Err, __result_expect__ } from "./result.js"
+export { Result, Ok, Err, __result_expect__ }
 
 const __structs__ = {}
 const __enums__ = {}
@@ -27,7 +31,8 @@ const __RESERVED_DEFINES__ = new Set([
     "queueMicrotask", "structuredClone",
     "eval", "isNaN", "isFinite", "parseFloat", "parseInt",
     "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
-    "type", "schemeArray", "verify", "values", "verifySafe"
+    "type", "schemeArray", "verify", "values", "verifySafe", "verifyAll", "parse",
+    "Result", "Ok", "Err", "tryVerify"
 ])
 export const __custom_types__ = {}
 
@@ -39,15 +44,8 @@ function writeError(text) {
 }
 
 function reportError(err) {
-    const loc = resolveErrorLocation(err)
-    writeError(formatError(
-        err?.tag ?? err?.name ?? "Error",
-        err?.message ?? String(err),
-        loc?.file ?? null,
-        loc?.line ?? null,
-        loc?.col ?? null,
-        loc?.sourceLine ?? null,
-    ) + "\n")
+    writeError(formatError(err instanceof Error || err?.message
+        ? err : { tag: "Error", message: String(err) }) + "\n")
 }
 
 let __error_handler__ = null
@@ -193,6 +191,7 @@ export function type(obj, properties = {}) {
 
     if (obj === null) return "null"
     if (obj === undefined) return "undefined"
+    if (obj instanceof Result) return "Result"
     if (Number.isNaN(obj)) return "NaN"
 
     // The optional DOM layer requires structural element detection.
@@ -253,8 +252,8 @@ export function type(obj, properties = {}) {
 }
 
 
-export function __type_ref__(label, resolve = null) {
-    return { __slim_type_ref__: true, label, resolve }
+export function __type_ref__(label, resolve = null, parameters = null) {
+    return { __slim_type_ref__: true, label, resolve, parameters }
 }
 
 export function __type_spec__(...references) {
@@ -328,7 +327,7 @@ function matchesResolvedType(resolved, label, value) {
 const BUILTIN_CLASSES = { Map, Set, Date, Promise, RegExp, Error }
 
 // Split tuple and generic members only at top-level commas.
-function splitTypeList(text) {
+function splitTypeList(text, separator = ",") {
     const parts = []
     let depth = 0
     let current = ""
@@ -336,7 +335,7 @@ function splitTypeList(text) {
     for (const char of text) {
         if (char === "<" || char === "[" || char === "(") depth++
         else if (char === ">" || char === "]" || char === ")") depth--
-        else if (char === "," && depth === 0) { parts.push(current.trim()); current = ""; continue }
+        else if (char === separator && depth === 0) { parts.push(current.trim()); current = ""; continue }
         current += char
     }
     if (current.trim()) parts.push(current.trim())
@@ -344,11 +343,12 @@ function splitTypeList(text) {
 }
 
 function matchesLabel(label, value) {
-    return __type_matches__(__type_spec__(__type_ref__(label)), value)
+    return __type_matches__(label, value)
 }
 
-function matchesNamedType(label, resolved, value) {
+function matchesNamedType(label, resolved, value, parameters = null) {
     if (label === "any") return true
+    if (label === "Result") return value instanceof Result
 
     if (label.length > 2 && label.startsWith("[") && label.endsWith("]")) {
         if (!Array.isArray(value)) return false
@@ -364,16 +364,22 @@ function matchesNamedType(label, resolved, value) {
         const args = splitTypeList(label.slice(generic + 1, -1))
         const first = args[0] ?? "any"
 
+        if (container === "Result") {
+            if (args.length !== 2 || !(value instanceof Result)) return false
+            const index = value.isOk() ? 0 : 1
+            return __type_matches__(parameters?.[index] ?? args[index], value.isOk() ? value.value : value.error)
+        }
+
         if (container === "Array") {
-            return Array.isArray(value) && value.every(item => matchesLabel(first, item))
+            return Array.isArray(value) && value.every(item => __type_matches__(parameters?.[0] ?? first, item))
         }
         if (container === "Set") {
-            return value instanceof Set && [...value].every(item => matchesLabel(first, item))
+            return value instanceof Set && [...value].every(item => __type_matches__(parameters?.[0] ?? first, item))
         }
         if (container === "Map") {
             const second = args[1] ?? "any"
             return value instanceof Map && [...value].every(([key, entry]) =>
-                matchesLabel(first, key) && matchesLabel(second, entry))
+                __type_matches__(parameters?.[0] ?? first, key) && __type_matches__(parameters?.[1] ?? second, entry))
         }
         if (container === "Promise") return value instanceof Promise
 
@@ -412,10 +418,17 @@ function matchesNamedType(label, resolved, value) {
 function matchesReference(reference, value) {
     const label = typeof reference === "string" ? reference : reference?.label
     if (!label) return false
-    return matchesNamedType(label, resolveTypeReference(reference), value)
+    return matchesNamedType(label, resolveTypeReference(reference), value, reference?.parameters)
 }
 
 export function __type_matches__(specification, value) {
+    if (typeof specification === "string") {
+        if (specification.endsWith("?")) return value == null || __type_matches__(specification.slice(0, -1), value)
+        const union = splitTypeList(specification, "|")
+        if (union.length > 1) return union.some(part => __type_matches__(part, value))
+        const intersection = splitTypeList(specification, "&")
+        if (intersection.length > 1) return intersection.every(part => __type_matches__(part, value))
+    }
     if (specification && specification.__slim_all__) {
         return specification.references.every(reference => matchesReference(reference, value))
     }
@@ -439,12 +452,12 @@ function typeError(varName, expected, value, action = "assigned") {
     const actual = type(value)
     const preview = previewValue(value)
     if (action === "redefined") {
-        throw new TypeError(`The variable "${varName}" is of type ${expected}, but it was redefined with type ${actual}: ${preview}`)
+        throw withDiagnostic(new TypeError(`The variable "${varName}" is of type ${expected}, but it was redefined with type ${actual}: ${preview}`), { expected, got: actual })
     }
     if (action === "mutated") {
-        throw new TypeError(`The variable "${varName}" is of type ${expected}, but it was mutated into type ${actual}: ${preview}`)
+        throw withDiagnostic(new TypeError(`The variable "${varName}" is of type ${expected}, but it was mutated into type ${actual}: ${preview}`), { expected, got: actual })
     }
-    throw new TypeError(`The "${varName}" is of type ${expected}, but was assigned a ${actual}: ${preview}`)
+    throw withDiagnostic(new TypeError(`The "${varName}" is of type ${expected}, but was assigned a ${actual}: ${preview}`), { expected, got: actual })
 }
 
 const guardedValues = new WeakMap()
@@ -554,7 +567,13 @@ export function __def_struct__(name, schema, specifications = {}, defaults = {},
         __defaults__: mergedDefaults,
         __methods__: mergedMethods,
         verify: object => __typed__(object, definition),
-        verifySafe: object => __typed__(object, definition, "errorResult"),
+        verifyAll: object => validateStruct(object, definition).result,
+        verifySafe: object => verifySafe(object, definition),
+        tryVerify: object => {
+            const { result } = validateStruct(object, definition)
+            return result.ok ? Ok(result.value) : Err(result.errors)
+        },
+        parse: input => parseStruct(input, definition),
         new: (values = {}) => {
             const filled = {}
             for (const key of Object.keys(mergedDefaults)) {
@@ -611,9 +630,9 @@ export function __typed_return__(value, specification, fnName) {
     if (RELEASE) return value
 
     if (!__type_matches__(specification, value)) {
-        throw new TypeError(
+        throw withDiagnostic(new TypeError(
             `function "${fnName}" must return ${__type_label__(specification)}, got ${type(value)}: ${previewValue(value)}`
-        )
+        ), { expected: __type_label__(specification), got: type(value) })
     }
     return value
 }
@@ -621,7 +640,7 @@ export function __typed_return__(value, specification, fnName) {
 export function __typed_pattern__(value, typeLabel) {
     if (RELEASE) return value
     if (!__type_matches__(typeLabel, value)) {
-        throw new TypeError(`destructured value does not match type ${typeLabel}: ${previewValue(value)}`)
+        throw withDiagnostic(new TypeError(`destructured value does not match type ${typeLabel}: ${previewValue(value)}`), { expected: typeLabel, got: type(value) })
     }
     return value
 }
@@ -646,7 +665,9 @@ export function __typed_parameter__(value, specification, bindingId, varName, op
     }
 
     if (!__type_matches__(specification, value)) {
-        throw new ArgumentDeclarationTypeError(message, { skipUserFrames: 1 })
+        throw new ArgumentDeclarationTypeError(typeof message === "function" ? message() : message, {
+            skipUserFrames: 1, expected: __type_label__(specification), got: type(value)
+        })
     }
 
     setVariableType(bindingId, {
@@ -702,6 +723,229 @@ __type_def__("negative", value => typeof value === "number" && value < 0)
 __type_def__("natural", value => Number.isInteger(value) && value >= 0)
 __type_def__("nonempty", value => (typeof value === "string" || Array.isArray(value)) && value.length > 0)
 
+function fieldPath(path, field) {
+    return /^[A-Za-z_$][\w$]*$/.test(field) ? `${path}.${field}` : `${path}[${JSON.stringify(field)}]`
+}
+
+function validationIssue(path, segments, expected, value, message, tag = "StructError", code = ERROR_CODES.TYPE) {
+    const got = type(value)
+    const issue = { path, expected, got, message, tag,
+        ...diagnosticDetails({ tag, message, expected, got, code, emptyArray: Array.isArray(value) && value.length === 0 }) }
+    Object.defineProperty(issue, "segments", { value: segments })
+    return issue
+}
+
+function mismatch(path, segments, expected, value) {
+    return validationIssue(path, segments, expected, value,
+        `"${path}" expected ${expected}, got ${type(value)}: ${previewValue(value)}`)
+}
+
+// The exhaustive traversal deliberately stays separate from __typed__'s fast,
+// first-error path. Each predicate is called once per attempted union branch.
+function collectReference(reference, value, path, segments, state) {
+    const label = typeof reference === "string" ? reference : reference?.label
+    const resolved = resolveTypeReference(reference)
+    const fail = () => ({ value, errors: [mismatch(path, segments, label ?? String(reference), value)] })
+    if (!label) return fail()
+    const child = (expected, item, index) => collectSpecification(expected, item, `${path}[${index}]`, [...segments, index], state)
+    const list = (items, expected, makeValue = values => values) => {
+        const errors = []
+        const values = items.map((item, index) => {
+            const result = child(expected, item, index)
+            errors.push(...result.errors)
+            return result.value
+        })
+        return { value: state.defaults ? makeValue(values) : value, errors }
+    }
+
+    if (label.startsWith("[") && label.endsWith("]") && label.length > 2) {
+        const parts = splitTypeList(label.slice(1, -1))
+        if (!Array.isArray(value) || value.length !== parts.length) return fail()
+        const errors = []
+        const values = value.map((item, index) => {
+            const result = child(parts[index], item, index)
+            errors.push(...result.errors)
+            return result.value
+        })
+        return { value: state.defaults ? values : value, errors }
+    }
+
+    const generic = label.indexOf("<")
+    if (generic !== -1 && label.endsWith(">")) {
+        const container = label.slice(0, generic).trim()
+        const args = splitTypeList(label.slice(generic + 1, -1))
+        const first = args[0] ?? "any"
+        if (container === "Result") {
+            if (args.length !== 2 || !(value instanceof Result)) return fail()
+            const index = value.isOk() ? 0 : 1
+            const field = index === 0 ? "value" : "error"
+            const inner = collectSpecification(reference?.parameters?.[index] ?? args[index], value[field],
+                `${path}.${field}`, [...segments, field], state)
+            return { value, errors: inner.errors }
+        }
+        if (container === "Array") return Array.isArray(value) ? list(value, first) : fail()
+        if (container === "Set") return value instanceof Set ? list([...value], first, items => new Set(items)) : fail()
+        if (container === "Map") {
+            if (!(value instanceof Map)) return fail()
+            const errors = []
+            const entries = [...value].map(([key, item], index) => {
+                const k = collectSpecification(first, key, `${path}[${index}].key`, [...segments, index, "key"], state)
+                const v = collectSpecification(args[1] ?? "any", item, `${path}[${index}].value`, [...segments, index, "value"], state)
+                errors.push(...k.errors, ...v.errors)
+                return [k.value, v.value]
+            })
+            return { value: state.defaults ? new Map(entries) : value, errors }
+        }
+        if (container === "Promise") return value instanceof Promise ? { value, errors: [] } : fail()
+        return collectReference({ label: container, __slim_type_ref__: true, resolve: () => resolved }, value, path, segments, state)
+    }
+
+    if (label.endsWith("[]")) {
+        if (!Array.isArray(value)) return fail()
+        if (value.length === 0) return matchesNamedType(label, resolved, value) ? { value, errors: [] } : fail()
+        const element = label.slice(0, -2)
+        // Preserve the runtime's existing array rules, including null[] and
+        // inferred homogeneous builtin arrays. Array<T> uses element checks.
+        if (resolved === undefined && type(value) === label) return { value, errors: [] }
+        if (resolved !== undefined && element.endsWith("[]")) return fail()
+        const result = list(value, { __slim_type_ref__: true, label: element, resolve: () => resolved })
+        if (!result.errors.length && resolved === undefined) return fail()
+        return result
+    }
+
+    if (resolved?.type === Struct && !label.includes("::")) {
+        return collectStruct(value, resolved, path, segments, state)
+    }
+    return matchesNamedType(label, resolved, value) ? { value, errors: [] } : fail()
+}
+
+function collectSpecification(specification, value, path, segments, state) {
+    const all = specification?.__slim_all__
+    const refs = all ? specification.references : Array.isArray(specification) ? specification : [specification]
+    if (refs.length === 1) return collectReference(refs[0], value, path, segments, state)
+    const candidates = []
+    let filled = value
+    for (const ref of refs) {
+        const result = collectReference(ref, all ? filled : value, path, segments, state)
+        if (!all && result.errors.length === 0) return result
+        filled = result.value
+        candidates.push(result)
+    }
+    if (all) return { value: filled, errors: candidates.flatMap(result => result.errors) }
+    // For a failed structural union, show the closest branch's concrete paths.
+    // Ties keep declaration order. Scalar unions produce one union diagnostic.
+    const nested = candidates.filter(result => result.errors.some(error => error.path !== path))
+    if (nested.length) {
+        return nested.reduce((best, result) => result.errors.length < best.errors.length ? result : best)
+    }
+    return { value, errors: [mismatch(path, segments, __type_label__(specification), value)] }
+}
+
+function collectStruct(value, definition, path, segments, state) {
+    const name = definition.name
+    const errors = []
+    let first = null
+    const legacy = (tag, message, properties = {}) => ({ result: { type: tag, msg: `${tag}: ${message}` }, properties })
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        const message = `Expected object for "${name}"`
+        return { value, errors: [validationIssue(path, segments, name, value, message)], first: legacy("StructError", message) }
+    }
+    let active = state.active.get(value)
+    if (active?.has(definition)) {
+        return { value, errors: [mismatch(path, segments, `acyclic ${name}`, value)] }
+    }
+    if (!active) state.active.set(value, active = new Set())
+    active.add(definition)
+    try {
+        const schema = definition.scheme
+        const extra = Object.keys(value).filter(key => !(key in schema))
+        if (extra.length) {
+            const message = `"${name}" does not contain any keys named "${extra.join(", ")}", but it receives them`
+            first = legacy("StructPassedError", message)
+            for (const key of extra) errors.push(validationIssue(fieldPath(path, key), [...segments, key], "no extra field", value[key],
+                `"${path}" does not contain any keys named "${key}", but it receives them`, "StructPassedError", ERROR_CODES.UNKNOWN_FIELD))
+        }
+        const filled = state.defaults ? { ...value } : value
+        for (const [field, fieldDef] of Object.entries(schema)) {
+            const fieldName = fieldPath(path, field)
+            const expected = __type_label__(fieldDef.specification)
+            if (!(field in value)) {
+                if (state.defaults && Object.hasOwn(definition.__defaults__, field)) {
+                    Object.defineProperty(filled, field, { value: definition.__defaults__[field](), enumerable: true, writable: true, configurable: true })
+                } else {
+                    if (!fieldDef.optional) {
+                        const message = `"${name}" is receiving fewer keys than expected. The key "${field}" have not been received`
+                        first ??= legacy("StructExpectError", message)
+                        errors.push(validationIssue(fieldName, [...segments, field], expected, undefined,
+                            `"${path}" is receiving fewer keys than expected. The key "${field}" have not been received`, "StructExpectError", ERROR_CODES.MISSING_FIELD))
+                    }
+                    continue
+                }
+            }
+            const item = filled[field]
+            const result = collectSpecification(fieldDef.specification, item, fieldName, [...segments, field], state)
+            errors.push(...result.errors)
+            if (state.defaults) Object.defineProperty(filled, field, { value: result.value, enumerable: true, writable: true, configurable: true })
+            if (result.errors.length) {
+                first ??= legacy("StructError", `"${name}.${field}" expected ${expected}, got ${type(item)}: ${previewValue(item)}`, {
+                    name, field, expected, got: type(item), fieldName: `${name}.${field}`
+                })
+            }
+        }
+        return { value: filled, errors, first }
+    } finally {
+        active.delete(definition)
+    }
+}
+
+function validateStruct(object, definition, defaults = false) {
+    const collected = collectStruct(object, definition, definition.name, [], { defaults, active: new WeakMap() })
+    const ok = collected.errors.length === 0
+    return { result: { ok, value: ok ? collected.value : undefined, errors: collected.errors }, first: collected.first }
+}
+
+function verifySafe(object, definition) {
+    const { result, first } = validateStruct(object, definition)
+    // Transitional aliases keep existing onError/application code working.
+    // They are non-enumerable so the public Result shape stays {ok,value,errors}.
+    Object.defineProperties(result, {
+        success: { value: result.ok },
+        result: { value: result.ok ? result.value : first.result },
+        ...(!result.ok ? { properties: { value: first.properties } } : {})
+    })
+    return result
+}
+
+function parseStruct(input, definition) {
+    let object = input
+    let spans = null
+    if (typeof input === "string") {
+        try {
+            object = JSON.parse(input)
+        } catch (error) {
+            return { ok: false, value: undefined, errors: [{
+                path: definition.name, expected: "valid JSON", got: "invalid JSON", message: error.message,
+                tag: "StructError", ...diagnosticDetails({ code: ERROR_CODES.JSON }), file: "<json>",
+                ...jsonSyntaxPosition(input, error)
+            }] }
+        }
+        spans = jsonLocations(input)
+    }
+    const { result } = validateStruct(object, definition, true)
+    if (spans) {
+        for (const error of result.errors) {
+            const segments = error.segments.slice()
+            let span = spans.get(JSON.stringify(segments))
+            while (!span && segments.length) {
+                segments.pop()
+                span = spans.get(JSON.stringify(segments))
+            }
+            if (span) Object.assign(error, { file: "<json>", ...jsonPosition(input, span.offset, span.end) })
+        }
+    }
+    return result
+}
+
 export function __typed__(value, structName, returnMethod = "default") {
     const name = typeof structName === "string" ? structName : structName?.name
     const structDef = typeof structName === "string" ? __structs__[structName] : structName
@@ -715,7 +959,7 @@ export function __typed__(value, structName, returnMethod = "default") {
     }
 
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return fail(new StructError(`Expected object for "${name}"`))
+        return fail(new StructError(`Expected object for "${name}"`, { code: ERROR_CODES.TYPE }))
     }
 
     const schema = structDef.scheme
@@ -738,8 +982,9 @@ export function __typed__(value, structName, returnMethod = "default") {
 
         if (!__type_matches__(definition.specification, value[field])) {
             return fail(new StructError(
-                `"${name}.${field}" expected ${__type_label__(definition.specification)}, got ${type(value[field])}: ${previewValue(value[field])}`
-            ), {
+                `"${name}.${field}" expected ${__type_label__(definition.specification)}, got ${type(value[field])}: ${previewValue(value[field])}`,
+            { expected: __type_label__(definition.specification), got: type(value[field]),
+                emptyArray: Array.isArray(value[field]) && value[field].length === 0 }), {
             	name: name,
              	field: field,
               	expected: __type_label__(definition.specification),
@@ -792,6 +1037,12 @@ export function __intdiv__(a, b) {
 }
 
 export function __match_eq__(subject, pattern) {
+    if (subject instanceof Result) {
+        if (pattern === Ok) return subject.isOk()
+        if (pattern === Err) return subject.isErr()
+        if (pattern instanceof Result) return subject.ok === pattern.ok &&
+            __match_eq__(subject.ok ? subject.value : subject.error, pattern.ok ? pattern.value : pattern.error)
+    }
     const a = subject instanceof EnumValue ? subject.value : subject
     const b = pattern instanceof EnumValue ? pattern.value : pattern
     return a === b
@@ -843,7 +1094,7 @@ Object.assign(globalThis, {
 
     type,
 
-    Component, Type, Struct,
+    Component, Type, Struct, Result, Ok, Err, __result_expect__,
 
     onError, test, assert, assertEqual,
 

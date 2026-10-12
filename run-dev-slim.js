@@ -40,7 +40,7 @@ function run() {
 
 function stop() {
     return new Promise(resolve => {
-        if (!app || app.killed) {
+        if (!app || app.killed || app.exitCode !== null || app.signalCode !== null) {
             app = null;
             return resolve();
         }
@@ -76,7 +76,8 @@ function stop() {
 
 function compile() {
     return new Promise(resolve => {
-        const compiler = spawn("node", [compileScript], {
+        // Same incremental cache as `slmc build`: only changed modules and their dependents recompile.
+        const compiler = spawn("node", [compileScript, "--stats"], {
             stdio: "inherit"
         });
 
@@ -113,8 +114,6 @@ async function rebuild() {
     }
 }
 
-await rebuild();
-
 const watchTarget = config.watch ?? ".";
 const ignoreDirs = new RegExp(`(^|[\\\\/])(node_modules|${distDir}|\\.git)([\\\\/]|$)`);
 
@@ -140,3 +139,6 @@ process.on("SIGINT", async () => {
 
     process.exit(0);
 });
+// Start after the initial scan so edits immediately after Ready cannot be missed.
+await new Promise(resolve => watcher.once("ready", resolve));
+await rebuild();

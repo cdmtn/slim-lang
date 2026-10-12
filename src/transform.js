@@ -3,8 +3,11 @@ import _traverse from "@babel/traverse"
 import _generate from "@babel/generator"
 import remapping from "@jridgewell/remapping"
 import { preprocess } from "./parser.js"
+import { splitType } from "./typeSyntax.js"
+import { lowerPipes, validateResultOperators, lowerResultOperators } from "./operators.js"
 import { emitJsDoc, emitDeclarations, jsdocComment } from "./jsdoc.js"
 import { checkTypes, formatDiagnostics } from "./checker.js"
+import { formatError, ERROR_CODES } from "./external/errors/index.js"
 import * as t from "@babel/types"
 import path from "node:path"
 import { getDistPath, resolveSlimImport, resolveSlimSource, distDirName } from "./modulePaths.js"
@@ -12,6 +15,7 @@ import {
     PRE_SOURCE,
     buildPreMap,
     computeLineStarts,
+    offsetToLineCol,
     mapPreToOriginal
 } from "./sourcemap.js"
 
@@ -30,7 +34,7 @@ function getTypeReferenceName(typeText) {
 
 const BUILTIN_TYPE_NAMES = new Set([
     "int", "float", "number", "string", "bool", "null", "undefined",
-    "object", "array", "function", "any", "element"
+    "object", "array", "function", "any", "element", "Result"
 ])
 
 function buildTypeSpec(typeText, path_, importedNames = new Set()) {
@@ -39,16 +43,23 @@ function buildTypeSpec(typeText, path_, importedNames = new Set()) {
         typeText = typeText.slice(0, -1).trim() + " | null | undefined"
     }
 
-    const isIntersection = typeText.includes("&") && !typeText.includes("|")
+    const isIntersection = splitType(typeText, "&").length > 1 && splitType(typeText, "|").length === 1
     const separator = isIntersection ? "&" : "|"
 
-    const refs = typeText.split(separator).map(part => part.trim()).filter(Boolean).map((label) => {
+    const refs = splitType(typeText, separator).map((label) => {
         const referenceName = getTypeReferenceName(label)
         const binding = referenceName ? path_.scope.getBinding(referenceName) : null
         const args = [t.stringLiteral(label)]
 
         if ((binding || importedNames.has(referenceName)) && !BUILTIN_TYPE_NAMES.has(referenceName)) {
             args.push(t.arrowFunctionExpression([], t.identifier(referenceName)))
+        }
+
+        const generic = label.indexOf("<")
+        if (generic !== -1 && label.endsWith(">")) {
+            if (args.length === 1) args.push(t.nullLiteral())
+            args.push(t.arrayExpression(splitType(label.slice(generic + 1, -1)).map(part =>
+                buildTypeSpec(part, path_, importedNames))))
         }
 
         return t.callExpression(t.identifier("__type_ref__"), args)
@@ -77,7 +88,7 @@ function getMemberName(member) {
     return null
 }
 
-function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
+function instrumentRuntimeTypes(ast, sourceFile, importedNames, reportKept) {
     const typedBindings = new Map()
     const staticFields = new Map()
     let bindingCount = 0
@@ -124,6 +135,9 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
             const { id, init } = path_.node
             if (!t.isIdentifier(id) || !isRuntimeCall(init, "__typed_variable__")) return
 
+            // The checker proved the initialiser; no check and no slot are needed.
+            if (init._slimElide) { path_.node.init = init.arguments[0]; return }
+
             const typeText = typeLabelFromArgument(init.arguments[1])
             const binding = registerBinding(path_, id.name)
             if (!typeText || !binding) return
@@ -146,7 +160,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
 
             const fields = staticFields.get(classBinding) ?? new Map()
             const displayName = `${className}.${fieldName}`
-            fields.set(fieldName, { displayName })
+            fields.set(fieldName, { displayName, typeText })
             staticFields.set(classBinding, fields)
 
             node.value = t.callExpression(t.identifier("__typed_static_field__"), [
@@ -172,6 +186,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
             fn.traverse({
                 Function(inner) { inner.skip() },
                 ReturnStatement(statement) {
+                    if (statement.node._slimProven) return
                     statement.node.argument = t.callExpression(t.identifier("__typed_return__"), [
                         statement.node.argument ?? t.identifier("undefined"),
                         t.cloneNode(specification),
@@ -189,6 +204,11 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
             if (isRuntimeCall(node, "__typed_parameter__")) {
                 const [value, expected, displayName, optional, message] = node.arguments
                 if (!t.isIdentifier(value)) return
+
+                if (node._slimElide && path_.parentPath.isExpressionStatement()) {
+                    path_.parentPath.remove()
+                    return
+                }
 
                 const typeText = typeLabelFromArgument(expected)
                 const binding = registerBinding(path_, value.name)
@@ -298,6 +318,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
                 const fieldName = staticField?.name
                 const field = staticField?.definition
                 if (!field) return
+                reportKept(node.left, field)
 
                 const check = value => t.callExpression(t.identifier("__typed_static_field_check__"), [
                     t.cloneNode(node.left.object),
@@ -334,6 +355,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
             if (!binding) return
 
             if (node.operator === "=") {
+                if (node._slimProven) return
                 node.right = buildTypedCheck(binding, node.right)
                 return
             }
@@ -365,6 +387,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
                 const fieldName = staticField?.name
                 const field = staticField?.definition
                 if (!field) return
+                reportKept(node.argument, field)
 
                 const previous = path_.scope.generateUidIdentifier("typedPrevious")
                 const nextValue = t.binaryExpression(
@@ -490,7 +513,7 @@ function formatSyntaxError(err, originalCode, sourceFile, mapped) {
     const loc = err.loc
 
     if (!loc) {
-        const e = new Error(`SyntaxError: ${err.message}`)
+        const e = new Error(formatError({ tag: "SyntaxError", message: err.message, code: ERROR_CODES.SYNTAX }).trim())
         e.slimSyntaxError = true
         throw e
     }
@@ -503,16 +526,9 @@ function formatSyntaxError(err, originalCode, sourceFile, mapped) {
 
     const lines = originalCode.split("\n")
     const sourceLine = lines[line - 1] ?? ""
-    const indent = sourceLine.length - sourceLine.trimStart().length
-    const pointer = " ".repeat(Math.max(0, column - 1 - indent)) + "^"
-
-    const e = new Error([
-        `SyntaxError: ${err.reasonCode ?? "Unexpected token"}`,
-        `    at ${sourceFile}:${line}:${column}`,
-        "",
-        `  ${sourceLine.trim()}`,
-        `  ${pointer}`,
-    ].join("\n"))
+    const e = new Error(formatError({ tag: "SyntaxError", code: ERROR_CODES.SYNTAX,
+        message: err.reasonCode ?? "Unexpected token", file: sourceFile, line, col: column, sourceLine
+    }).trim())
     e.slimSyntaxError = true
     throw e
 }
@@ -530,7 +546,7 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
     try {
         ast = parse(pre, {
             sourceType: "module",
-            plugins: ["jsx"]
+            plugins: ["jsx", ["pipelineOperator", { proposal: "minimal" }]]
         })
     } catch (err) {
         if (err.code === "BABEL_PARSER_SYNTAX_ERROR") {
@@ -538,6 +554,13 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
         }
         throw err
     }
+
+    const operatorError = (node, message) => {
+        const error = { loc: node.loc?.start, reasonCode: message }
+        formatSyntaxError(error, code, sourceFile, mapped)
+    }
+    lowerPipes(ast, node => code.slice(mapped.origin[node.start], mapped.origin[node.start] + 5) === "await", operatorError)
+    validateResultOperators(ast, operatorError)
 
     traverse(ast, {
         FunctionDeclaration(path_) {
@@ -587,6 +610,8 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
         }
     })
 
+    const checks = []
+
     if (options.check !== false) {
         const moduleImports = []
         const moduleWildcards = []
@@ -617,7 +642,9 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
             originalCode: code,
             sourceFile,
             imports: moduleImports,
-            wildcards: moduleWildcards
+            wildcards: moduleWildcards,
+            elide: options.elide !== false && process.env.SLIM_NO_ELIDE !== "1",
+            checks
         })
         if (diagnostics.length > 0) {
             const error = new Error(formatDiagnostics(diagnostics))
@@ -635,7 +662,18 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
     const declarations = options.declarations ? emitDeclarations(ast) : null
     const typedefs = options.jsdoc ? emitJsDoc(ast) : []
 
-    instrumentRuntimeTypes(ast, sourceFile, importedNames)
+    lowerResultOperators(ast, operatorError)
+
+    const originalLines = computeLineStarts(code)
+    instrumentRuntimeTypes(ast, sourceFile, importedNames, (node, field) => {
+        if (options.check === false) return
+        const origin = mapped.origin[node.start ?? 0]
+        const at = origin >= 0 ? offsetToLineCol(origin, originalLines) : null
+        checks.push({ kind: "assignment", name: field.displayName, type: field.typeText,
+            status: "kept", line: at ? at.line + 1 : 0, column: at ? at.column + 1 : 0,
+            reason: "static field writes are always checked" })
+    })
+    checks.sort((a, b) => a.line - b.line || a.column - b.column || a.kind.localeCompare(b.kind))
 
     const runtimePath = getRuntimePath(sourceFile, usesDom(ast) ? "defaults.js" : "core.js")
     const defaultImport = t.importDeclaration([], t.stringLiteral(runtimePath))
@@ -746,5 +784,5 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
     const mapComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(finalMap)).toString("base64")
         }`
 
-    return { code: output + mapComment, declarations }
+    return { code: output + mapComment, declarations, checks }
 }

@@ -1,4 +1,15 @@
 import fs from "node:fs"
+import { tokenize } from "./lexer.js"
+
+function breakPipes(code) {
+    const pipes = tokenize(code).filter(token => token.type === "punct" && token.value === "|>")
+    for (const pipe of pipes.reverse()) {
+        let start = pipe.start
+        while (start > 0 && /\s/.test(code[start - 1])) start--
+        code = code.slice(0, start) + "\n|>" + code.slice(pipe.end)
+    }
+    return code
+}
 
 function analyze(code) {
     const info = [{ reindentable: true, depth: 0 }]
@@ -54,7 +65,7 @@ function analyze(code) {
 }
 
 export function formatSlim(code) {
-    const normalized = code.replace(/\r\n/g, "\n")
+    const normalized = breakPipes(code.replace(/\r\n/g, "\n"))
     const lines = normalized.split("\n")
     const perLine = analyze(normalized)
 
@@ -67,6 +78,7 @@ export function formatSlim(code) {
 
         let depth = info.depth
         if (/^[}\])]/.test(trimmed)) depth = Math.max(0, depth - 1)
+        if (trimmed.startsWith("|>")) depth++
         return "    ".repeat(depth) + trimmed
     })
 
