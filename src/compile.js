@@ -1,21 +1,70 @@
 import "./handlers/errorHandler.js"
-import fs from "fs"
-import path from "path"
+import fs from "node:fs"
+import path from "node:path"
+import { createHash } from "node:crypto"
 import { transform } from "./transform.js"
-
-import { readFile } from 'fs/promises';
-import { Debug } from "./external/core.js";
-import { stripComments } from "./parser.js";
-import { UseError } from "./external/classErrors.js";
-import { getDistPath, resolveSlimSource, PACKAGE_ROOT, distDirName } from "./modulePaths.js";
+import { exportModuleTypes, importModuleTypes } from "./checker.js"
+import { reactiveExports } from "./reactivity.js"
+import { findUses } from "./syntax/index.js"
+import { UseError } from "./external/classErrors.js"
+import { getDistPath, setOutputPath, resolveSlimSource, PACKAGE_ROOT, distDirName, readJson } from "./modulePaths.js"
 
 const compiled = new Set()
+const compiling = []
+
+
+const CACHE_FILE = () => path.resolve(distDirName(), ".slim-cache.json")
+const hash = text => createHash("sha1").update(text).digest("hex")
+
+let cache = { key: null, files: {} }
+let nextCache = { key: null, files: {} }
+const changedTypes = new Set()
+let reused = 0
+
+function compilerFingerprint(config) {
+    const parts = [JSON.stringify(config), JSON.stringify({ jsdoc, declarations, check, release, useStyle, usePackages })]
+    const walk = dir => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name)
+            if (entry.isDirectory()) walk(full)
+            else if (entry.name.endsWith(".js")) {
+                const { mtimeMs, size } = fs.statSync(full)
+                parts.push(`${full}:${mtimeMs}:${size}`)
+            }
+        }
+    }
+    walk(path.join(PACKAGE_ROOT, "src"))
+    return hash(parts.join("\n"))
+}
+
+function loadCache(key) {
+    nextCache = { key, files: {} }
+    if (process.env.SLIM_FORCE === "1") return
+    try {
+        const saved = JSON.parse(fs.readFileSync(CACHE_FILE(), "utf8"))
+        if (saved.key === key) cache = saved
+    } catch {
+    }
+}
+
+function saveCache() {
+    fs.mkdirSync(path.dirname(CACHE_FILE()), { recursive: true })
+    fs.writeFileSync(CACHE_FILE(), JSON.stringify(nextCache))
+}
 
 let usePackages = true
 let jsdoc = false
 let declarations = false
 let check = true
 let useStyle = "import"
+let release = false
+
+const debug = (...args) => console.log("[SLIM]", ...args)
+
+function fail(error) {
+    console.error(`\n${error.tag ?? error.name}: ${error.message}\n`)
+    process.exit(1)
+}
 
 function syncExternal() {
     const srcExternal = path.join(PACKAGE_ROOT, "src/external")
@@ -35,145 +84,121 @@ function syncExternal() {
                 continue
             }
 
-            if (fs.existsSync(distFull)) {
-                const srcMtime = fs.statSync(srcFull).mtimeMs
-                const distMtime = fs.statSync(distFull).mtimeMs
-                if (srcMtime <= distMtime) continue
-            }
+            if (fs.existsSync(distFull) && fs.statSync(srcFull).mtimeMs <= fs.statSync(distFull).mtimeMs) continue
 
             fs.copyFileSync(srcFull, distFull)
-            Debug.log(`Synced: ${path.relative(".", distFull)}`)
+            debug(`Synced: ${path.relative(".", distFull)}`)
         }
     }
 
     syncDir(srcExternal, distExternal)
 }
 
-function extractUses(code) {
-    code = stripComments(code)
-    const uses = []
-
-    const patterns = [
-        /\buse\s+(@[\w$\/.-]+)\s*;?$/gm,
-        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+\s+as\s+[\w$]+|[\w$]+)\s+from\s+(@[\w$\/.-]+)\s*;?$/gm,
-        /\buse\s+(?:\{[^}]+\}|\*\s+as\s+[\w$]+|[\w$]+\s+as\s+[\w$]+|[\w$]+)\s+from\s+["']([^"']+)["']\s*;?$/gm,
-        /\buse\s+["']([^"']+)["']\s*;?$/gm,
-    ]
-
-    for (const pattern of patterns) {
-        let match
-        while ((match = pattern.exec(code)) !== null) {
-            const raw = match[1]
-            if (raw) uses.push(raw)
-        }
-    }
-
-    return [...new Set(uses)]
-}
-
-function compileFile(slimFile, isEntry = false, mainEntry = null) {
-    const hasSilmExtension = slimFile.endsWith(".slim")
-    const file = hasSilmExtension ? slimFile : slimFile + ".slim"
-    const abs = path.resolve(file)
+function compileFile(slimFile) {
+    const abs = path.resolve(slimFile.endsWith(".slim") ? slimFile : slimFile + ".slim")
 
     if (compiled.has(abs)) return
     compiled.add(abs)
 
-    if (!fs.existsSync(abs)) {
-        console.error(`\nError: File not found: ${abs}\n`)
-        process.exit(1)
-    }
+    if (!fs.existsSync(abs)) fail(new Error(`File not found: ${abs}`))
 
     const code = fs.readFileSync(abs, "utf8")
-
-    const uses = extractUses(code)
+    const uses = [...new Set(findUses(code).map(use => use.source))]
 
     if (!usePackages && uses.length > 0) {
-        const err = new UseError(
+        fail(new UseError(
             `The "use" feature is disabled. Set "uses": { "enabled": true } in slimconfig.json to enable imports (in ${abs}, found: use ${uses[0]})`
-        )
-        console.error(err)
-        process.exit(1)
+        ))
     }
 
+    const deps = []
+    let inCycle = false
+
+    compiling.push(abs)
     for (const raw of uses) {
         const depPath = resolveSlimSource(raw, abs)
-
         if (depPath === null) continue
 
-        if (!fs.existsSync(depPath)) {
-            const err = new UseError(`No lib/file founded by the path: ${raw}`)
-            console.error(err)
-            process.exit(1)
+        if (!fs.existsSync(depPath)) fail(new UseError(`Nothing found for "use ${raw}" (looked for ${depPath})`))
+        if (depPath === abs) fail(new UseError(`${abs} uses itself`))
+
+        const cycleStart = compiling.indexOf(depPath)
+        if (cycleStart !== -1) {
+            const chain = [...compiling.slice(cycleStart), depPath].map(file => path.relative(".", file))
+            console.warn(`[SLIM] Warning: circular use ${chain.join(" -> ")}`)
+            inCycle = true
+            continue
         }
 
-        if (depPath === abs) {
-            console.error(`\nError: Circular dependency detected in ${abs}\n`)
-            process.exit(1)
-        }
-        compileFile(depPath, false, mainEntry)
+        compileFile(depPath)
+        deps.push(depPath)
+    }
+    compiling.pop()
+
+    const outputPath = getDistPath(abs)
+    const sourceHash = hash(code)
+    const saved = cache.files[abs]
+    const upToDate = saved && !inCycle && saved.hash === sourceHash && saved.output === outputPath &&
+        fs.existsSync(outputPath) && deps.every(dep => !changedTypes.has(dep))
+
+    if (upToDate) {
+        importModuleTypes(abs, saved.types)
+        nextCache.files[abs] = saved
+        reused++
+        return
     }
 
-    const { code: output, declarations: dts } = transform(code, abs, { jsdoc, declarations, check, uses: useStyle })
-
-    const outputPath = isEntry
-        ? path.resolve(distDirName(), `${mainEntry}.js`)
-        : getDistPath(abs)
+    const { code: output, declarations: dts } = transform(code, abs, {
+        jsdoc, declarations, check, release, uses: useStyle, outFile: outputPath
+    })
 
     fs.mkdirSync(path.dirname(outputPath), { recursive: true })
     fs.writeFileSync(outputPath, output)
 
     if (dts) fs.writeFileSync(outputPath.replace(/\.js$/, ".d.ts"), dts)
+
+    const types = exportModuleTypes(abs)
+    const reactive = JSON.stringify([...reactiveExports(abs)])
+    if (!saved || saved.types !== types || saved.reactive !== reactive) changedTypes.add(abs)
+    nextCache.files[abs] = { hash: sourceHash, output: outputPath, types, reactive }
 }
 
-function cleanDist(slimFileClear) {
-    const keep = new Set([
-        path.resolve(distDirName(), `${slimFileClear}.js`),
-        path.resolve(distDirName(), "mappings.json"),
-    ])
+function cleanDist() {
+    const keep = new Set([path.resolve(distDirName(), "mappings.json"), CACHE_FILE()])
 
-    function addDirToKeep(dir) {
+    function keepDir(dir) {
         if (!fs.existsSync(dir)) return
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.resolve(dir, entry.name)
+        for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.resolve(dir, item.name)
             keep.add(full)
-            if (entry.isDirectory()) addDirToKeep(full)
+            if (item.isDirectory()) keepDir(full)
         }
     }
-    addDirToKeep(path.resolve(distDirName(), "external"))
+    keepDir(path.resolve(distDirName(), "external"))
 
-    for (const slimFile of compiled) {
-        if (slimFile === path.resolve(`${slimFileClear}.slim`)) {
-            keep.add(path.resolve(distDirName(), `${slimFileClear}.js`))
-        } else {
-            keep.add(getDistPath(slimFile))
-        }
-    }
+    for (const slimFile of compiled) keep.add(getDistPath(slimFile))
 
     for (const kept of [...keep]) {
         if (kept.endsWith(".js")) keep.add(kept.replace(/\.js$/, ".d.ts"))
     }
 
-    function walkAndClean(dir) {
+    function clean(dir) {
         if (!fs.existsSync(dir)) return
 
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.resolve(dir, entry.name)
+        for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.resolve(dir, item.name)
 
-            if (entry.isDirectory()) {
-                walkAndClean(full)
-
-                if (fs.readdirSync(full).length === 0) {
-                    fs.rmdirSync(full)
-                }
+            if (item.isDirectory()) {
+                clean(full)
+                if (fs.readdirSync(full).length === 0) fs.rmdirSync(full)
             } else if (!keep.has(full)) {
                 fs.rmSync(full)
-                Debug.log(`Cleaned: ${path.relative(".", full)}`)
+                debug(`Cleaned: ${path.relative(".", full)}`)
             }
         }
     }
 
-    walkAndClean(path.resolve(distDirName()))
+    clean(path.resolve(distDirName()))
 }
 
 function writeJsConfig() {
@@ -195,17 +220,16 @@ function writeJsConfig() {
     }
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 4) + "\n")
-    Debug.log("Created jsconfig.json for TypeScript checking")
+    debug("Created jsconfig.json for TypeScript checking")
 }
 
-async function main() {
+function main() {
     let data
 
     try {
-        const contents = await readFile("slimconfig.json", "utf8")
-        data = JSON.parse(contents)
+        data = readJson("slimconfig.json")
     } catch (error) {
-        console.error("Error reading or parsing slimconfig.json:", error)
+        console.error("Error reading or parsing slimconfig.json:", error.message)
         process.exit(1)
     }
 
@@ -217,17 +241,24 @@ async function main() {
     jsdoc = data.jsdoc === true
     declarations = data.declarations === true
     check = data.check !== false && process.env.SLIM_NO_CHECK !== "1"
+    release = data.release === true || process.env.SLIM_RELEASE === "1"
 
     if (!("main" in data)) return
 
     try {
         syncExternal()
-        compileFile(data.main, true, data.main)
-        cleanDist(data.main)
+        loadCache(compilerFingerprint(data))
+        const entry = data.main.endsWith(".slim") ? data.main : `${data.main}.slim`
+        setOutputPath(entry, path.resolve(distDirName(), `${data.main}.js`))
+        compileFile(entry)
+        cleanDist()
+        saveCache()
+        if (reused > 0) debug(`Up to date: ${reused} of ${compiled.size} files`)
         if (jsdoc) writeJsConfig()
     } catch (error) {
         console.error(`\n${error.slimTypeErrors || error.slimSyntaxError ? error.message : error}\n`)
         process.exit(1)
     }
 }
+
 main()

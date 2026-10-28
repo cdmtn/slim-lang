@@ -1,19 +1,13 @@
-import { parse } from "@babel/parser"
 import _traverse from "@babel/traverse"
 import _generate from "@babel/generator"
-import remapping from "@jridgewell/remapping"
-import { preprocess } from "./parser.js"
+import { parseProgram } from "./syntax/index.js"
 import { emitJsDoc, emitDeclarations, jsdocComment } from "./jsdoc.js"
 import { checkTypes, formatDiagnostics } from "./checker.js"
+import { compileReactivity, reactiveExports } from "./reactivity.js"
+import { readType, formatType, referenceName } from "./external/typeSyntax.js"
 import * as t from "@babel/types"
 import path from "node:path"
 import { getDistPath, resolveSlimImport, resolveSlimSource, distDirName } from "./modulePaths.js"
-import {
-    PRE_SOURCE,
-    buildPreMap,
-    computeLineStarts,
-    mapPreToOriginal
-} from "./sourcemap.js"
 
 const traverse = _traverse.default ?? _traverse
 const generate = _generate.default ?? _generate
@@ -22,39 +16,28 @@ function isRuntimeCall(node, name) {
     return t.isCallExpression(node) && t.isIdentifier(node.callee, { name })
 }
 
-function getTypeReferenceName(typeText) {
-    const withoutArray = typeText.replace(/(?:\[\])+$/, "")
-    const withoutGeneric = withoutArray.replace(/<.*>$/, "")
-    return withoutGeneric.split("::")[0]
-}
-
 const BUILTIN_TYPE_NAMES = new Set([
     "int", "float", "number", "string", "bool", "null", "undefined",
     "object", "array", "function", "any", "element"
 ])
 
 function buildTypeSpec(typeText, path_, importedNames = new Set()) {
-    typeText = typeText.trim()
-    if (typeText.endsWith("?")) {
-        typeText = typeText.slice(0, -1).trim() + " | null | undefined"
-    }
+    const type = readType(typeText)
+    const parts = type.kind === "union" || type.kind === "intersection" ? type.types : [type]
 
-    const isIntersection = typeText.includes("&") && !typeText.includes("|")
-    const separator = isIntersection ? "&" : "|"
+    const refs = parts.map(part => {
+        const name = referenceName(part)
+        const binding = name ? path_.scope.getBinding(name) : null
+        const args = [t.stringLiteral(formatType(part))]
 
-    const refs = typeText.split(separator).map(part => part.trim()).filter(Boolean).map((label) => {
-        const referenceName = getTypeReferenceName(label)
-        const binding = referenceName ? path_.scope.getBinding(referenceName) : null
-        const args = [t.stringLiteral(label)]
-
-        if ((binding || importedNames.has(referenceName)) && !BUILTIN_TYPE_NAMES.has(referenceName)) {
-            args.push(t.arrowFunctionExpression([], t.identifier(referenceName)))
+        if ((binding || importedNames.has(name)) && !BUILTIN_TYPE_NAMES.has(name)) {
+            args.push(t.arrowFunctionExpression([], t.identifier(name)))
         }
 
         return t.callExpression(t.identifier("__type_ref__"), args)
     })
 
-    const combinator = isIntersection ? "__type_spec_all__" : "__type_spec__"
+    const combinator = type.kind === "intersection" ? "__type_spec_all__" : "__type_spec__"
     return t.callExpression(t.identifier(combinator), refs)
 }
 
@@ -75,6 +58,26 @@ function getMemberName(member) {
     if (!member.computed && t.isIdentifier(member.property)) return member.property.name
     if (member.computed && t.isStringLiteral(member.property)) return member.property.value
     return null
+}
+
+const UNWRAPPED_IN_RELEASE = new Set(["__typed_variable__", "__typed_pattern__"])
+const REMOVED_IN_RELEASE = new Set(["__typed_parameter__", "__declare_return__"])
+
+function stripRuntimeChecks(ast) {
+    traverse(ast, {
+        ExpressionStatement(path_) {
+            const call = path_.node.expression
+            if (t.isCallExpression(call) && t.isIdentifier(call.callee) && REMOVED_IN_RELEASE.has(call.callee.name)) {
+                path_.remove()
+            }
+        },
+        CallExpression(path_) {
+            const { callee, arguments: args } = path_.node
+            if (t.isIdentifier(callee) && UNWRAPPED_IN_RELEASE.has(callee.name) && args[0]) {
+                path_.replaceWith(args[0])
+            }
+        }
+    })
 }
 
 function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
@@ -245,6 +248,8 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
 
                 if (oneLine && t.isIdentifier(node.arguments[1])) {
                     node.arguments[1] = buildTypeSpec(node.arguments[1].name, path_, importedNames)
+                } else if (oneLine && t.isStringLiteral(node.arguments[1])) {
+                    node.arguments[1] = buildTypeSpec(node.arguments[1].value, path_, importedNames)
                 }
 
                 for (const property of properties.properties) {
@@ -282,6 +287,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
         } else if (scopePath.isBlockStatement()) {
             scopePath.unshiftContainer("body", declaration)
         } else if (scopePath.isFunction()) {
+            scopePath.ensureBlock()
             scopePath.get("body").unshiftContainer("body", declaration)
         } else if (scopePath.isForStatement() && t.isVariableDeclaration(scopePath.node.init)) {
             scopePath.node.init.declarations.unshift(...declaration.declarations)
@@ -290,113 +296,52 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
         }
     }
 
+    function checkerFor(path_, target) {
+        if (t.isMemberExpression(target)) {
+            const field = getStaticField(path_, target)
+            if (!field?.definition) return null
+
+            return value => t.callExpression(t.identifier("__typed_static_field_check__"), [
+                t.cloneNode(target.object),
+                t.stringLiteral(field.name),
+                value,
+                t.stringLiteral(field.definition.displayName)
+            ])
+        }
+
+        if (!t.isIdentifier(target)) return null
+        const binding = typedBindings.get(path_.scope.getBinding(target.name))
+        return binding ? value => buildTypedCheck(binding, value) : null
+    }
+
     traverse(ast, {
         AssignmentExpression(path_) {
             const { node } = path_
-            if (t.isMemberExpression(node.left)) {
-                const staticField = getStaticField(path_, node.left)
-                const fieldName = staticField?.name
-                const field = staticField?.definition
-                if (!field) return
-
-                const check = value => t.callExpression(t.identifier("__typed_static_field_check__"), [
-                    t.cloneNode(node.left.object),
-                    t.stringLiteral(fieldName),
-                    value,
-                    t.stringLiteral(field.displayName)
-                ])
-
-                if (node.operator === "=") {
-                    node.right = check(node.right)
-                    return
-                }
-
-                if (["&&=", "||=", "??="].includes(node.operator)) {
-                    const operator = node.operator.slice(0, -1)
-                    const assignment = t.assignmentExpression(
-                        "=",
-                        t.cloneNode(node.left),
-                        check(node.right)
-                    )
-                    path_.replaceWith(t.logicalExpression(operator, t.cloneNode(node.left), assignment))
-                    path_.skip()
-                    return
-                }
-
-                const operator = node.operator.slice(0, -1)
-                node.operator = "="
-                node.right = check(t.binaryExpression(operator, t.cloneNode(node.left), node.right))
-                return
-            }
-
-            if (!t.isIdentifier(node.left)) return
-            const binding = typedBindings.get(path_.scope.getBinding(node.left.name))
-            if (!binding) return
+            const check = checkerFor(path_, node.left)
+            if (!check) return
 
             if (node.operator === "=") {
-                node.right = buildTypedCheck(binding, node.right)
+                node.right = check(node.right)
                 return
             }
 
-            if (["&&=", "||=", "??="].includes(node.operator)) {
-                const operator = node.operator.slice(0, -1)
-                const assignment = t.assignmentExpression(
-                    "=",
-                    t.cloneNode(node.left),
-                    buildTypedCheck(binding, node.right)
-                )
+            const operator = node.operator.slice(0, -1)
+
+            if (["&&", "||", "??"].includes(operator)) {
+                const assignment = t.assignmentExpression("=", t.cloneNode(node.left), check(node.right))
                 path_.replaceWith(t.logicalExpression(operator, t.cloneNode(node.left), assignment))
                 path_.skip()
                 return
             }
 
-            const operator = node.operator.slice(0, -1)
             node.operator = "="
-            node.right = buildTypedCheck(
-                binding,
-                t.binaryExpression(operator, t.cloneNode(node.left), node.right)
-            )
+            node.right = check(t.binaryExpression(operator, t.cloneNode(node.left), node.right))
         },
 
         UpdateExpression(path_) {
             const { node } = path_
-            if (t.isMemberExpression(node.argument)) {
-                const staticField = getStaticField(path_, node.argument)
-                const fieldName = staticField?.name
-                const field = staticField?.definition
-                if (!field) return
-
-                const previous = path_.scope.generateUidIdentifier("typedPrevious")
-                const nextValue = t.binaryExpression(
-                    node.operator === "++" ? "+" : "-",
-                    t.cloneNode(node.argument),
-                    t.numericLiteral(1)
-                )
-                const check = t.callExpression(t.identifier("__typed_static_field_check__"), [
-                    t.cloneNode(node.argument.object),
-                    t.stringLiteral(fieldName),
-                    nextValue,
-                    t.stringLiteral(field.displayName)
-                ])
-                const assignment = t.assignmentExpression("=", t.cloneNode(node.argument), check)
-                const result = node.prefix ? t.cloneNode(node.argument) : t.cloneNode(previous)
-
-                path_.replaceWith(t.callExpression(
-                    t.arrowFunctionExpression([], t.blockStatement([
-                        t.variableDeclaration("const", [t.variableDeclarator(previous, t.cloneNode(node.argument))]),
-                        t.expressionStatement(assignment),
-                        t.returnStatement(result)
-                    ])),
-                    []
-                ))
-                path_.skip()
-                return
-            }
-
-            if (!t.isIdentifier(node.argument)) return
-
-            const binding = typedBindings.get(path_.scope.getBinding(node.argument.name))
-            if (!binding) return
+            const check = checkerFor(path_, node.argument)
+            if (!check) return
 
             const previous = path_.scope.generateUidIdentifier("typedPrevious")
             const nextValue = t.binaryExpression(
@@ -404,11 +349,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
                 t.cloneNode(node.argument),
                 t.numericLiteral(1)
             )
-            const assignment = t.assignmentExpression(
-                "=",
-                t.cloneNode(node.argument),
-                buildTypedCheck(binding, nextValue)
-            )
+            const assignment = t.assignmentExpression("=", t.cloneNode(node.argument), check(nextValue))
             const result = node.prefix ? t.cloneNode(node.argument) : t.cloneNode(previous)
 
             path_.replaceWith(t.callExpression(
@@ -424,12 +365,7 @@ function instrumentRuntimeTypes(ast, sourceFile, importedNames) {
     })
 }
 
-function resolvePath(raw, fromFile) {
-    return resolveSlimImport(raw, fromFile)
-}
-
-function getRuntimePath(sourceFile, entry) {
-    const distFile = getDistPath(sourceFile)
+function getRuntimePath(distFile, entry) {
     const runtimeAbs = path.resolve(distDirName(), "external", entry)
     const rel = path.relative(path.dirname(distFile), runtimeAbs)
     const relFixed = rel.replace(/\\/g, "/")
@@ -439,7 +375,8 @@ function getRuntimePath(sourceFile, entry) {
 const DOM_RUNTIME = new Set([
     "htmlToVdom", "HTMLElement", "__html__",
     "__flush_events__", "__bind_events__", "__lifecycle__",
-    "__create_host__", "__adopt_into__", "__define_element__"
+    "__create_host__", "__adopt_into__", "__define_element__",
+    "__template__", "__insert__", "__once__", "__root__", "__list__", "__attr__", "__set__", "__on__", "__spread__", "__branch__", "__enter__", "__leave__", "__child__", "__next__", "__move__", "Router", "Link", "Portal", "navigate", "route"
 ])
 
 function usesDom(ast) {
@@ -466,7 +403,7 @@ function parseSpecifiers(name, bareIsDefault = true) {
 
     if (trimmed.startsWith("{")) {
         const inner = trimmed.replace(/[{}]/g, "").trim()
-        return inner.split(",").map(part => {
+        return inner.split(",").filter(part => part.trim()).map(part => {
             const aliasParts = part.trim().split(/\s+as\s+/)
             const imported = aliasParts[0].trim()
             const local = (aliasParts[1] ?? aliasParts[0]).trim()
@@ -486,28 +423,31 @@ function parseSpecifiers(name, bareIsDefault = true) {
     return [t.importDefaultSpecifier(t.identifier(trimmed))]
 }
 
-function formatSyntaxError(err, originalCode, sourceFile, mapped) {
+function formatSyntaxError(err, originalCode, sourceFile) {
     const loc = err.loc
+    const atEnd = typeof err.pos === "number" && err.pos >= originalCode.trimEnd().length
+    let message = err.slimMessage ??
+        (atEnd ? "Unexpected end of file: a bracket or block is not closed" : err.message.replace(/\s*\(\d+:\d+\)$/, ""))
+
+    if (!err.slimMessage && !atEnd && message.startsWith("Unexpected token") && typeof err.pos === "number") {
+        const token = /^(?:[\w$]+|\S)/.exec(originalCode.slice(err.pos))?.[0]
+        if (token) message = message.replace("Unexpected token", `Unexpected "${token}"`)
+    }
 
     if (!loc) {
-        const e = new Error(`SyntaxError: ${err.message}`)
+        const e = new Error(`SyntaxError: ${message}`)
         e.slimSyntaxError = true
         throw e
     }
 
-    const preLineStarts = computeLineStarts(mapped.text)
-    const origLineStarts = computeLineStarts(originalCode)
-    const { line, column } = mapPreToOriginal(
-        mapped, preLineStarts, origLineStarts, loc.line - 1, loc.column
-    )
-
-    const lines = originalCode.split("\n")
-    const sourceLine = lines[line - 1] ?? ""
+    const line = loc.line
+    const column = loc.column + 1
+    const sourceLine = (originalCode.split("\n")[line - 1] ?? "").replace(/\r$/, "")
     const indent = sourceLine.length - sourceLine.trimStart().length
     const pointer = " ".repeat(Math.max(0, column - 1 - indent)) + "^"
 
     const e = new Error([
-        `SyntaxError: ${err.reasonCode ?? "Unexpected token"}`,
+        `SyntaxError: ${message}`,
         `    at ${sourceFile}:${line}:${column}`,
         "",
         `  ${sourceLine.trim()}`,
@@ -517,41 +457,113 @@ function formatSyntaxError(err, originalCode, sourceFile, mapped) {
     throw e
 }
 
-export function transform(code, sourceFile = "input.ps", options = {}) {
+function isAsyncFunctionBinding(binding) {
+    const node = binding?.path.node
+    if (t.isFunctionDeclaration(node)) return node.async
+    return t.isVariableDeclarator(node) && t.isFunction(node.init) && node.init.async
+}
+
+function callsAsyncFunction(path_, call) {
+    return t.isCallExpression(call) && t.isIdentifier(call.callee) &&
+        isAsyncFunctionBinding(path_.scope.getBinding(call.callee.name))
+}
+
+function isExport(node) {
+    return t.isExportNamedDeclaration(node) || t.isExportDefaultDeclaration(node) || t.isExportAllDeclaration(node)
+}
+
+function catchTopLevel(statements) {
+    return t.tryStatement(
+        t.blockStatement(statements),
+        t.catchClause(t.identifier("__err__"), t.blockStatement([
+            t.expressionStatement(t.callExpression(t.identifier("__handle_sync_error__"), [t.identifier("__err__")]))
+        ]))
+    )
+}
+
+function layoutTopLevel(body) {
+    const head = []
+    const declared = []
+    const ordered = []
+    const hasExports = body.some(isExport)
+
+    const assign = (target, value) =>
+        ordered.push(t.expressionStatement(t.assignmentExpression("=", target, value)))
+
+    const declare = (kind, names, exported) => {
+        const declaration = t.variableDeclaration(kind, names.map(name => t.variableDeclarator(t.identifier(name))))
+        declared.push(exported ? t.exportNamedDeclaration(declaration, []) : declaration)
+    }
+
+    const hoistVariables = (node, exported) => {
+        const names = node.declarations.flatMap(declarator => Object.keys(t.getBindingIdentifiers(declarator.id)))
+        declare(node.kind === "var" ? "var" : "let", names, exported)
+        for (const declarator of node.declarations) {
+            if (declarator.init) assign(declarator.id, declarator.init)
+        }
+    }
+
+    const hoistClass = (node, exported) => {
+        declare("let", [node.id.name], exported)
+        assign(t.identifier(node.id.name), t.classExpression(node.id, node.superClass, node.body, node.decorators))
+    }
+
+    const hoistDefault = node => {
+        const declaration = node.declaration
+        if (t.isFunctionDeclaration(declaration)) return declared.push(node)
+
+        let local = "__slim_default__"
+        if (t.isClassDeclaration(declaration) && declaration.id) {
+            local = declaration.id.name
+            hoistClass(declaration, false)
+        } else {
+            declare("let", [local], false)
+            assign(t.identifier(local), t.isClassDeclaration(declaration)
+                ? t.classExpression(null, declaration.superClass, declaration.body, declaration.decorators)
+                : declaration)
+        }
+        declared.push(t.exportNamedDeclaration(null, [t.exportSpecifier(t.identifier(local), t.identifier("default"))]))
+    }
+
+    for (const node of body) {
+        if (t.isImportDeclaration(node) || node._slimTypeSlots) head.push(node)
+        else if (!hasExports) ordered.push(node)
+        else if (t.isFunctionDeclaration(node)) declared.push(node)
+        else if (t.isVariableDeclaration(node)) hoistVariables(node, false)
+        else if (t.isClassDeclaration(node) && node.id) hoistClass(node, false)
+        else if (t.isExportDefaultDeclaration(node)) hoistDefault(node)
+        else if (t.isExportNamedDeclaration(node) && t.isVariableDeclaration(node.declaration)) hoistVariables(node.declaration, true)
+        else if (t.isExportNamedDeclaration(node) && t.isClassDeclaration(node.declaration)) hoistClass(node.declaration, true)
+        else if (isExport(node)) declared.push(node)
+        else ordered.push(node)
+    }
+
+    return [...head, ...declared, catchTopLevel(ordered)]
+}
+
+export function transform(code, sourceFile = "input.slim", options = {}) {
+    const outFile = options.outFile ?? getDistPath(sourceFile)
     const bareIsDefault = options.uses !== "named" && options.uses !== "legacy"
-    const asyncFunctions = new Set()
     const imports = new Map()
     const wildcards = []
     const specifierSources = []
 
-    const { code: pre, mapped } = preprocess(code, sourceFile)
-
     let ast
     try {
-        ast = parse(pre, {
-            sourceType: "module",
-            plugins: ["jsx"]
-        })
+        ast = parseProgram(code, sourceFile)
     } catch (err) {
-        if (err.code === "BABEL_PARSER_SYNTAX_ERROR") {
-            formatSyntaxError(err, code, sourceFile, mapped)
-        }
+        if (err.code === "BABEL_PARSER_SYNTAX_ERROR") formatSyntaxError(err, code, sourceFile)
         throw err
     }
 
     traverse(ast, {
-        FunctionDeclaration(path_) {
-            if (path_.node.async) {
-                asyncFunctions.add(path_.node.id?.name)
-            }
-        },
         CallExpression(path_) {
             const callee = path_.node.callee
 
             if (t.isIdentifier(callee) && callee.name === "__use_all__") {
                 const [sourceNode] = path_.node.arguments
                 if (!t.isStringLiteral(sourceNode)) return
-                wildcards.push(resolvePath(sourceNode.value, sourceFile))
+                wildcards.push(resolveSlimImport(sourceNode.value, sourceFile, outFile))
                 specifierSources.push({ spec: null, raw: sourceNode.value })
                 path_.remove()
                 return
@@ -560,7 +572,7 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
             if (t.isIdentifier(callee) && callee.name === "__use__") {
                 const [nameNode, sourceNode] = path_.node.arguments
                 if (!t.isStringLiteral(nameNode) || !t.isStringLiteral(sourceNode)) return
-                imports.set(nameNode.value, resolvePath(sourceNode.value, sourceFile))
+                imports.set(nameNode.value, resolveSlimImport(sourceNode.value, sourceFile, outFile))
                 specifierSources.push({ spec: nameNode.value, raw: sourceNode.value })
                 path_.remove()
             }
@@ -574,16 +586,13 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
 
         ExpressionStatement(path_) {
             const expr = path_.node.expression
-            if (
-                t.isCallExpression(expr) &&
-                t.isIdentifier(expr.callee) &&
-                asyncFunctions.has(expr.callee.name)
-            ) {
-                path_.node.expression = t.callExpression(
-                    t.memberExpression(expr, t.identifier("catch")),
-                    [t.identifier("__handle_async_error__")]
-                )
-            }
+            const isVoid = t.isUnaryExpression(expr, { operator: "void" })
+            const call = isVoid ? expr.argument : expr
+            if (!callsAsyncFunction(path_, call)) return
+
+            const handled = t.callExpression(t.memberExpression(call, t.identifier("catch")), [t.identifier("__handle_async_error__")])
+            if (isVoid) expr.argument = handled
+            else path_.node.expression = handled
         }
     })
 
@@ -613,11 +622,12 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
         }
 
         const diagnostics = checkTypes(ast, {
-            mapped,
             originalCode: code,
             sourceFile,
             imports: moduleImports,
-            wildcards: moduleWildcards
+            wildcards: moduleWildcards,
+            locals: [...imports.keys()].flatMap(name => parseSpecifiers(name, bareIsDefault).map(specifier => specifier.local.name)),
+            openGlobals: wildcards.length > 0
         })
         if (diagnostics.length > 0) {
             const error = new Error(formatDiagnostics(diagnostics))
@@ -635,9 +645,32 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
     const declarations = options.declarations ? emitDeclarations(ast) : null
     const typedefs = options.jsdoc ? emitJsDoc(ast) : []
 
+    if (options.release) stripRuntimeChecks(ast)
     instrumentRuntimeTypes(ast, sourceFile, importedNames)
+    const importedReactive = new Map()
+    for (const { spec, raw } of specifierSources) {
+        const slimSource = resolveSlimSource(raw, sourceFile)
+        const exported = slimSource ? reactiveExports(slimSource) : null
+        if (!exported?.size) continue
+        if (spec === null) {
+            for (const [name, kind] of exported) importedReactive.set(name, kind)
+            continue
+        }
+        for (const specifier of parseSpecifiers(spec, bareIsDefault)) {
+            if (!t.isImportSpecifier(specifier)) continue
+            const imported = t.isIdentifier(specifier.imported) ? specifier.imported.name : specifier.imported.value
+            if (exported.has(imported)) importedReactive.set(specifier.local.name, exported.get(imported))
+        }
+    }
 
-    const runtimePath = getRuntimePath(sourceFile, usesDom(ast) ? "defaults.js" : "core.js")
+    try {
+        compileReactivity(ast, code, { sourceFile, importedReactive })
+    } catch (err) {
+        if (err.code === "BABEL_PARSER_SYNTAX_ERROR") formatSyntaxError(err, code, sourceFile)
+        throw err
+    }
+
+    const runtimePath = getRuntimePath(outFile, usesDom(ast) ? "defaults.js" : "core.js")
     const defaultImport = t.importDeclaration([], t.stringLiteral(runtimePath))
 
     if (options.jsdoc) {
@@ -668,83 +701,15 @@ export function transform(code, sourceFile = "input.ps", options = {}) {
         t.importDeclaration(parseSpecifiers(name, bareIsDefault), t.stringLiteral(source))
     )
 
-    const existingImports = ast.program.body.filter(n => t.isImportDeclaration(n))
-
-    const exportDeclarations = ast.program.body.filter(n =>
-        t.isExportNamedDeclaration(n) ||
-        t.isExportDefaultDeclaration(n) ||
-        t.isExportAllDeclaration(n)
-    )
-
-    const exportedNames = new Set()
-    for (const node of exportDeclarations) {
-        if (t.isExportNamedDeclaration(node) && !node.declaration && node.specifiers) {
-            for (const spec of node.specifiers) {
-                exportedNames.add(spec.local.name)
-            }
-        }
-    }
-
-    const slotDecls = []
-    const topLevel = []
-    const rest = []
-
-    for (const node of ast.program.body) {
-        if (t.isImportDeclaration(node)) continue
-        if (t.isExportNamedDeclaration(node) || t.isExportDefaultDeclaration(node) || t.isExportAllDeclaration(node)) continue
-
-        if (node._slimTypeSlots) {
-            slotDecls.push(node)
-        } else if (
-            (t.isFunctionDeclaration(node) || t.isClassDeclaration(node)) &&
-            node.id && exportedNames.has(node.id.name)
-        ) {
-            topLevel.push(node)
-        } else {
-            rest.push(node)
-        }
-    }
-
-    const tryBlock = t.tryStatement(
-        t.blockStatement(rest),
-        t.catchClause(
-            t.identifier("__err__"),
-            t.blockStatement([
-                t.expressionStatement(
-                    t.callExpression(
-                        t.identifier("__handle_sync_error__"),
-                        [t.identifier("__err__")]
-                    )
-                )
-            ])
-        )
-    )
-
     ast.program.body = [
         defaultImport,
         ...wildcardNodes,
         ...importNodes,
-        ...existingImports,
-        ...slotDecls,
-        ...topLevel,
-        ...exportDeclarations,
-        tryBlock
+        ...layoutTopLevel(ast.program.body)
     ]
 
-    const { code: output, map: generatedMap } = generate(
-        ast,
-        { sourceMaps: true, sourceFileName: PRE_SOURCE },
-        pre
-    )
-
-    const preMap = buildPreMap(mapped, code, sourceFile)
-    const finalMap = remapping(
-        generatedMap,
-        file => (file === PRE_SOURCE ? preMap : null)
-    )
-
-    const mapComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(finalMap)).toString("base64")
-        }`
+    const { code: output, map } = generate(ast, { sourceMaps: true, sourceFileName: sourceFile }, code)
+    const mapComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString("base64")}`
 
     return { code: output + mapComment, declarations }
 }

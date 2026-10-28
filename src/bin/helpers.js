@@ -15,13 +15,8 @@ export const rootPath = process.cwd()
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function parseValue(value) {
-    if(value == "true" || value == "false") {
-        return value == "true"
-    }
-    if(/^-?\d*\.?\d*$/.test(value)) {
-        return parseFloat(value)
-    }
-
+    if (value === "true" || value === "false") return value === "true"
+    if (value.trim() !== "" && Number.isFinite(Number(value))) return Number(value)
     return value
 }
 

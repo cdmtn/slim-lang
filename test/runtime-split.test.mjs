@@ -42,7 +42,6 @@ test("nothing the core runtime pulls in leaves the runtime folder", () => {
             queue.push(specifier.slice(2))
         }
 
-        // Embedded engines may not expose process.
         const lines = source.split("\n")
         lines.forEach((line, index) => {
             if (!/\bprocess\./.test(line)) return

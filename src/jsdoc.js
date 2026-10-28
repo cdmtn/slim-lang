@@ -1,5 +1,6 @@
 import _traverse from "@babel/traverse"
 import * as t from "@babel/types"
+import { readType } from "./external/typeSyntax.js"
 
 const traverse = _traverse.default ?? _traverse
 
@@ -10,18 +11,26 @@ const PRIMITIVES = {
     function: "Function", element: "HTMLElement"
 }
 
-function mapType(label) {
-    label = String(label).trim()
-    if (!label) return "any"
-    if (label.length > 2 && label.startsWith("[") && label.endsWith("]")) {
-        return `[${label.slice(1, -1).split(",").map(part => mapType(part.trim())).join(", ")}]`
+function toTS(type) {
+    switch (type.kind) {
+        case "named": return PRIMITIVES[type.name] ?? type.name
+        case "literal": return typeof type.value === "string" ? JSON.stringify(type.value) : String(type.value)
+        case "array": {
+            const element = toTS(type.element)
+            return type.element.kind === "union" || type.element.kind === "intersection" ? `(${element})[]` : `${element}[]`
+        }
+        case "tuple": return `[${type.items.map(toTS).join(", ")}]`
+        case "generic": return `${type.name}<${type.args.map(toTS).join(", ")}>`
+        case "enumMember": return "number | string"
+        case "function": return `((${type.params.map((param, index) => `${param.name ?? `arg${index}`}: ${toTS(param.type)}`).join(", ")}) => ${toTS(type.returns)})`
+        case "union": return [...new Set(type.types.map(toTS))].join(" | ")
+        case "intersection": return [...new Set(type.types.map(toTS))].join(" & ")
     }
-    if (label.endsWith("?")) return mapType(label.slice(0, -1)) + " | null | undefined"
-    if (label.endsWith("[]")) return mapType(label.slice(0, -2)) + "[]"
-    if (label.includes("|")) return [...new Set(label.split("|").map(mapType))].join(" | ")
-    if (label.includes("&")) return [...new Set(label.split("&").map(mapType))].join(" & ")
-    if (label.includes("::")) return "number | string"
-    return PRIMITIVES[label] ?? label
+    return "any"
+}
+
+function mapType(label) {
+    return toTS(readType(String(label)))
 }
 
 export function jsdocComment(lines) {
@@ -39,6 +48,12 @@ function enumTypedef(name, schema) {
 
     const type = types.size ? [...types].join(" | ") : "number | string"
     return `@typedef {${type}} ${name}`
+}
+
+function stringList(node) {
+    return t.isArrayExpression(node)
+        ? node.elements.filter(element => t.isStringLiteral(element)).map(element => element.value)
+        : []
 }
 
 function structTypedef(name, schema) {
@@ -98,7 +113,7 @@ function paramLines(fn) {
     return lines
 }
 
-function structInterface(schema) {
+function structInterface(schema, readonly = []) {
     const fields = []
 
     for (const property of schema.properties) {
@@ -113,7 +128,8 @@ function structInterface(schema) {
 
         const optional = rawKey.startsWith("*")
         const field = optional ? rawKey.slice(1).trim() : rawKey
-        fields.push(`${field}${optional ? "?" : ""}: ${mapType(property.value.value)}`)
+        const modifier = readonly.includes(field) ? "readonly " : ""
+        fields.push(`${modifier}${field}${optional ? "?" : ""}: ${mapType(property.value.value)}`)
     }
 
     return `{ ${fields.join("; ")} }`
@@ -199,8 +215,11 @@ export function emitDeclarations(ast) {
 
                 if (t.isIdentifier(init.callee, { name: "__def_struct__" }) && t.isObjectExpression(init.arguments[1])) {
                     usesStruct = true
-                    lines.push(`export interface ${name} ${structInterface(init.arguments[1])}`)
-                    lines.push(`export declare const ${name}: SlimStruct<${name}>`)
+                    const params = stringList(init.arguments[6])
+                    const generic = params.length ? `<${params.join(", ")}>` : ""
+                    const anyArgs = params.length ? `<${params.map(() => "any").join(", ")}>` : ""
+                    lines.push(`export interface ${name}${generic} ${structInterface(init.arguments[1], stringList(init.arguments[7]))}`)
+                    lines.push(`export declare const ${name}: SlimStruct<${name}${anyArgs}>`)
                 } else if (t.isIdentifier(init.callee, { name: "__def_enum__" }) && t.isObjectExpression(init.arguments[1])) {
                     lines.push(`export type ${name} = ${enumValueType(init.arguments[1])}`)
                     lines.push(`export declare const ${name}: Record<string, any>`)
@@ -215,7 +234,7 @@ export function emitDeclarations(ast) {
     if (lines.length === 0) return null
 
     const header = usesStruct
-        ? "type SlimStruct<T> = { verify(value: unknown): T; verifySafe(value: unknown): { success: boolean; result: T } }\n\n"
+        ? "type SlimStruct<T> = { verify(value: unknown): T; verifySafe(value: unknown): { success: boolean; result: T }; new(values?: Partial<T>): T }\n\n"
         : ""
 
     return header + lines.join("\n") + "\n"
@@ -233,6 +252,7 @@ export function emitJsDoc(ast) {
                 if (t.isIdentifier(init.callee, { name: "__def_struct__" }) &&
                     t.isStringLiteral(init.arguments[0]) &&
                     t.isObjectExpression(init.arguments[1])) {
+                    for (const param of stringList(init.arguments[6])) typedefs.push(`@template ${param}`)
                     typedefs.push(structTypedef(init.arguments[0].value, init.arguments[1]))
                 }
 

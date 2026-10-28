@@ -1,43 +1,16 @@
 import { formatError } from "../external/classErrors.js"
 
-process.on("unhandledRejection", (err, promise) => {
-    if (err?.tag) {
-        console.error(formatError(
-            err.tag,
-            err.message,
-            err.file       ?? null,
-            err.line       ?? null,
-            err.col        ?? null,
-            err.sourceLine ?? null,
-        ))
-        process.exit(1)
-    }
-
+function report(err) {
     console.error(formatError(
-        "Error",
+        err?.tag ?? "Error",
         err?.message ?? String(err),
-        null, null, null, null
+        err?.tag ? err.file ?? null : null,
+        err?.tag ? err.line ?? null : null,
+        err?.tag ? err.col ?? null : null,
+        err?.tag ? err.sourceLine ?? null : null
     ))
     process.exit(1)
-})
+}
 
-process.on("uncaughtException", (err) => {
-    if (err?.tag) {
-        console.error(formatError(
-            err.tag,
-            err.message,
-            err.file       ?? null,
-            err.line       ?? null,
-            err.col        ?? null,
-            err.sourceLine ?? null,
-        ))
-        process.exit(1)
-    }
-
-    console.error(formatError(
-        "Error",
-        err?.message ?? String(err),
-        null, null, null, null
-    ))
-    process.exit(1)
-})
+process.on("unhandledRejection", report)
+process.on("uncaughtException", report)

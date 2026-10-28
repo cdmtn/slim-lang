@@ -1,4 +1,4 @@
-import { Type, type } from "./core.js";
+import { type } from "./core.js";
 
 export const SlimVariableTypes = Object.create(null)
 

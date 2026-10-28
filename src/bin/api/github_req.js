@@ -20,281 +20,95 @@ export async function githubRequest(token, url, options = {}) {
             "Content-Type": "application/json",
             ...options.headers
         })
-	});
+    });
 
-	const data = await response.json();
+    const data = response.status === 204 ? null : await response.json().catch(() => null);
 
-	if (!response.ok) {
-        throw new Error(
-            data.message || `GitHub API error: ${response.status}`
-        );
+    if (!response.ok) {
+        throw new Error(data?.message || `GitHub API error: ${response.status}`);
     }
 
     return data;
 }
 
 async function getFiles(dir, base = dir) {
-    const entries = await fs.readdir(dir, {
-        withFileTypes: true
-    });
-
     const files = [];
 
-    for (const entry of entries) {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
         const fullPath = path.join(dir, entry.name);
 
-        if (entry.isDirectory()) {
-            files.push(
-                ...(await getFiles(fullPath, base))
-            );
-            continue;
-        }
-
-        if (!entry.isFile()) {
-            continue;
-        }
-
-        files.push({
-            path: path.relative(base, fullPath).replaceAll("\\", "/"),
-            fullPath
-        });
+        if (entry.isDirectory()) files.push(...await getFiles(fullPath, base));
+        else if (entry.isFile()) files.push({ path: path.relative(base, fullPath).replaceAll("\\", "/"), fullPath });
     }
 
     return files;
 }
 
-export async function publishToGitHub({
-    token,
-    repo,
-    contentPath,
-    branch = "main"
-}) {
+async function commitDirectory({ token, repo, dir, message, branch = "main" }) {
+    const files = await getFiles(dir);
+    if (files.length === 0) throw new Error("Package directory is empty");
+
+    const reference = await githubRequest(token, `/repos/${repo}/git/ref/heads/${branch}`);
+    const parentSha = reference.object.sha;
+    const parentCommit = await githubRequest(token, `/repos/${repo}/git/commits/${parentSha}`);
+
+    const tree = [];
+    for (const file of files) {
+        const blob = await githubRequest(token, `/repos/${repo}/git/blobs`, {
+            method: "POST",
+            body: JSON.stringify({ content: await fs.readFile(file.fullPath, "base64"), encoding: "base64" })
+        });
+        tree.push({ path: file.path, mode: "100644", type: "blob", sha: blob.sha });
+    }
+
+    const newTree = await githubRequest(token, `/repos/${repo}/git/trees`, {
+        method: "POST",
+        body: JSON.stringify({ base_tree: parentCommit.tree.sha, tree })
+    });
+
+    const commit = await githubRequest(token, `/repos/${repo}/git/commits`, {
+        method: "POST",
+        body: JSON.stringify({ message, tree: newTree.sha, parents: [parentSha] })
+    });
+
+    await githubRequest(token, `/repos/${repo}/git/refs/heads/${branch}`, {
+        method: "PATCH",
+        body: JSON.stringify({ sha: commit.sha })
+    });
+
+    return { commit: commit.sha, tree: newTree.sha };
+}
+
+export async function publishToGitHub({ token, repo, contentPath, branch = "main" }) {
+    if (!/^[^/]+\/[^/]+$/.test(repo)) {
+        return { success: false, msg: `Invalid GitHub repository: ${repo}` };
+    }
+
     try {
-        const [owner, repoName] = repo.split("/");
+        const repository = await githubRequest(token, `/repos/${repo}`);
+        const { commit } = await commitDirectory({ token, repo, dir: contentPath, message: "Publish package", branch });
 
-        if (!owner || !repoName || repo.split("/").length !== 2) {
-            return {
-                success: false,
-                msg: `Invalid GitHub repository: ${repo}`
-            };
-        }
-
-        const repository = await githubRequest(
-            token,
-            `/repos/${owner}/${repoName}`
-        );
-
-        const files = await getFiles(contentPath);
-
-        if (!files.length) {
-            return {
-                success: false,
-                msg: "Package directory is empty"
-            };
-        }
-
-        const reference = await githubRequest(
-            token,
-            `/repos/${owner}/${repoName}/git/ref/heads/${branch}`
-        );
-
-        const parentSha = reference.object.sha;
-
-        const parentCommit = await githubRequest(
-            token,
-            `/repos/${owner}/${repoName}/git/commits/${parentSha}`
-        );
-
-        const tree = [];
-
-        for (const file of files) {
-            const content = await fs.readFile(
-                file.fullPath,
-                "base64"
-            );
-
-            const blob = await githubRequest(
-                token,
-                `/repos/${owner}/${repoName}/git/blobs`,
-                {
-                    method: "POST",
-                    body: JSON.stringify({
-                        content,
-                        encoding: "base64"
-                    })
-                }
-            );
-
-            tree.push({
-                path: file.path,
-                mode: "100644",
-                type: "blob",
-                sha: blob.sha
-            });
-        }
-
-        const newTree = await githubRequest(
-            token,
-            `/repos/${owner}/${repoName}/git/trees`,
-            {
-                method: "POST",
-                body: JSON.stringify({
-                    base_tree: parentCommit.tree.sha,
-                    tree
-                })
-            }
-        );
-
-        const commit = await githubRequest(
-            token,
-            `/repos/${owner}/${repoName}/git/commits`,
-            {
-                method: "POST",
-                body: JSON.stringify({
-                    message: "Publish package",
-                    tree: newTree.sha,
-                    parents: [parentSha]
-                })
-            }
-        );
-
-        await githubRequest(
-            token,
-            `/repos/${owner}/${repoName}/git/refs/heads/${branch}`,
-            {
-                method: "PATCH",
-                body: JSON.stringify({
-                    sha: commit.sha
-                })
-            }
-        );
-
-        return {
-            success: true,
-            msg: `Published ${repo}`,
-            repo: repository.full_name,
-            commit: commit.sha
-        };
+        return { success: true, msg: `Published ${repo}`, repo: repository.full_name, commit };
     }
     catch (error) {
-        return {
-            success: false,
-            msg: error instanceof Error
-                ? error.message
-                : String(error)
-        };
+        return { success: false, msg: error instanceof Error ? error.message : String(error) };
     }
 }
 
-export async function updateGitHubRepo({
-    token,
-    repo,
-    packagePath,
-    version,
-    message = `Release ${version}`
-}) {
-    const branch = await githubRequest(
-        token,
-        `/repos/${repo}/git/ref/heads/main`
-    );
+export async function updateGitHubRepo({ token, repo, packagePath, version, message = `Release ${version}` }) {
+    try {
+        const { commit, tree } = await commitDirectory({ token, repo, dir: packagePath, message });
 
-    const parentSha = branch.object.sha;
-
-    const parentCommit = await githubRequest(
-        token,
-        `/repos/${repo}/git/commits/${parentSha}`
-    );
-
-    const baseTreeSha = parentCommit.tree.sha;
-
-    const files = await getFiles(packagePath);
-
-    if (files.length === 0) {
-        throw new Error("Package directory is empty");
-    }
-
-	const tree = [];
-
-	for (const file of files) {
-        const content = await fs.readFile(file.fullPath);
-
-        const blob = await githubRequest(
-            token,
-            `/repos/${repo}/git/blobs`,
-            {
-                method: "POST",
-                body: JSON.stringify({
-                    content: content.toString("base64"),
-                    encoding: "base64"
-                })
-            }
-        );
-
-        tree.push({
-            path: file.path,
-            mode: "100644",
-            type: "blob",
-            sha: blob.sha
+        await githubRequest(token, `/repos/${repo}/git/refs`, {
+            method: "POST",
+            body: JSON.stringify({ ref: `refs/tags/v${version}`, sha: commit })
         });
+
+        return { success: true, commit, tree, version, tag: `v${version}` };
     }
-
-    const newTree = await githubRequest(
-        token,
-        `/repos/${repo}/git/trees`,
-        {
-            method: "POST",
-            body: JSON.stringify({
-                base_tree: baseTreeSha,
-                tree
-            })
-        }
-    );
-
-    const commit = await githubRequest(
-        token,
-        `/repos/${repo}/git/commits`,
-        {
-            method: "POST",
-            body: JSON.stringify({
-                message,
-                tree: newTree.sha,
-                parents: [parentSha]
-            })
-        }
-	);
-
-    await githubRequest(
-        token,
-        `/repos/${repo}/git/refs/heads/main`,
-        {
-            method: "PATCH",
-            body: JSON.stringify({
-                sha: commit.sha
-            })
-        }
-    );
-
-    const tagRef = `refs/tags/v${version}`;
-
-    await githubRequest(
-        token,
-        `/repos/${repo}/git/refs`,
-        {
-            method: "POST",
-            body: JSON.stringify({
-                ref: tagRef,
-                sha: commit.sha
-            })
-        }
-    );
-
-    return {
-        success: true,
-        commit: commit.sha,
-        tree: newTree.sha,
-        version,
-        tag: `v${version}`
-    };
+    catch (error) {
+        return { success: false, msg: error instanceof Error ? error.message : String(error) };
+    }
 }
 
 export async function createGitHubRepo(token, repository, organization = false) {
@@ -335,7 +149,6 @@ export async function createGitHubRepo(token, repository, organization = false) 
             };
         }
 
-        // Organization repositories use the org endpoint; user repositories require ownership.
         if (!organization) {
             const userResponse = await fetch(
                 `${GITHUB_API}/user`,

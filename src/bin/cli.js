@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { execSync } from "child_process";
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from "node:child_process";
 import path from "node:path"
 import fs from "node:fs"
 import { fileURLToPath } from "node:url"
@@ -10,6 +9,7 @@ import { fileURLToPath } from "node:url"
 import { log, error, parseValue } from "./helpers.js"
 import { runTests } from "../test-runner.js"
 import { formatFile } from "../format.js"
+import { readJson } from "../modulePaths.js"
 
 import pkg from "../../package.json" with { type: "json" };
 import defaultConfig from "./config.default.json" with { type: "json" };
@@ -17,14 +17,30 @@ import defaultConfig from "./config.default.json" with { type: "json" };
 const root = process.cwd()
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
-const compileScript = JSON.stringify(path.join(packageRoot, "src", "compile.js"))
-const runScript = JSON.stringify(path.join(packageRoot, "run-slim.js"))
-const devScript = JSON.stringify(path.join(packageRoot, "run-dev-slim.js"))
+const compileScript = path.join(packageRoot, "src", "compile.js")
+const runScript = path.join(packageRoot, "run-slim.js")
+const devScript = path.join(packageRoot, "run-dev-slim.js")
 
 const program = new Command();
 const slimConfigPath = path.join(root, "slimconfig.json")
 const packagePath = path.join(root, "package.json")
-const spaceRegex = /\s/gm
+
+function runScripts(...scripts) {
+    for (const [script, ...args] of scripts) {
+        const { status, signal } = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" })
+        if (status !== 0) {
+            process.exitCode = status ?? (signal ? 1 : 0)
+            return false
+        }
+    }
+    return true
+}
+
+const splitList = value => value.split(/\s+/).map(item => item.trim()).filter(Boolean)
+
+function writeSlimConfig(config) {
+    fs.writeFileSync(slimConfigPath, JSON.stringify(config, null, 4), "utf8")
+}
 
 function slimConfigCheck() {
     packageCheck()
@@ -40,16 +56,15 @@ function slimConfigCheck() {
 function slimConfigRead() {
     slimConfigCheck()
 
-    return JSON.parse(fs.readFileSync(slimConfigPath, "utf8"));
+    return readJson(slimConfigPath);
 }
-// slimserver.json lives next to the entry file named by slimconfig's "main".
 function serverConfigRead() {
     try {
-        const config = JSON.parse(fs.readFileSync(slimConfigPath, "utf8"))
+        const config = readJson(slimConfigPath)
         if (!config.main) return {}
 
         const dir = path.dirname(path.resolve(config.main))
-        return JSON.parse(fs.readFileSync(path.join(dir, "slimserver.json"), "utf8"))
+        return readJson(path.join(dir, "slimserver.json"))
     } catch {
         return {}
     }
@@ -72,15 +87,18 @@ program
     .command("build")
     .description("Build a Slim project")
     .option("-S, --silent", "Build without log")
+    .option("-R, --release", "Leave runtime type checks out of the output")
     .option("--no-check", "Build without static type checking")
+    .option("-F, --force", "Rebuild every file, ignoring the build cache")
     .action((params) => {
         slimConfigCheck()
 
+        if(params.release) process.env.SLIM_RELEASE = "1"
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
+        if(params.force) process.env.SLIM_FORCE = "1"
 
         if(!params.silent) log("Building...")
-        execSync(`node ${compileScript}`, { stdio: "inherit" });
-        if(!params.silent) log("Ready!")
+        if(runScripts([compileScript]) && !params.silent) log("Ready!")
     });
 
 program
@@ -97,7 +115,7 @@ program
         if(params.dev) process.env.SLIM_DEV = "1"
         if(!params.check) process.env.SLIM_NO_CHECK = "1"
         if(!params.silent) log(params.dev ? "Building and running (dev)..." : "Building and running...")
-        execSync(`node ${compileScript} && node ${runScript}`, { stdio: "inherit" });
+        runScripts([compileScript], [runScript])
     });
 
 program
@@ -107,31 +125,21 @@ program
     .action((params) => {
         const config = slimConfigRead()
 
-        if("main" in config) {
-            const mainContent = fs.readFileSync(config.main + ".slim", "utf8")
+        if(!("main" in config)) return
 
-            if(params["line"]) {
-                try {
-                    let line = parseInt(params.line) - 1
-                    const lines = mainContent.split("\n")
-                    const lineContent = lines[line]
+        const file = config.main.endsWith(".slim") ? config.main : config.main + ".slim"
+        const mainContent = fs.readFileSync(file, "utf8")
 
-                    if(lineContent != undefined) {
-                        console.log(mainContent.split("\n")[line])
-                    }
-                    else {
-                        error(`Line ${line + 1} does not exist. The file contains between 1 and ${lines.length} line(-s)`)
-                    }
-                }
-                catch(e) {
-                    error(e)
-                    return
-                }
-            }
-            else {
-                console.log(mainContent)
-            }
+        if(!params.line) {
+            console.log(mainContent)
+            return
         }
+
+        const lines = mainContent.split(/\r?\n/)
+        const line = Number.parseInt(params.line, 10)
+
+        if(line >= 1 && line <= lines.length) console.log(lines[line - 1])
+        else error(`Line ${params.line} does not exist. The file has lines 1 to ${lines.length}`)
     });
 
 program
@@ -143,18 +151,17 @@ program
     .action((params) => {
         slimConfigCheck()
 
-        // Dev is on when requested on the CLI or set in slimserver.json ("dev": true).
         const dev = Boolean(params.dev || params.hot || serverConfigRead().dev === true)
 
         if(params.release) process.env.SLIM_RELEASE = "1"
 
         if(dev) {
             log("Starting Slim dev server (watch + live reload)...")
-            execSync(`node ${devScript}${params.hot ? " --hot" : ""}`, { stdio: "inherit" });
+            runScripts(params.hot ? [devScript, "--hot"] : [devScript])
         }
         else {
             log("Starting Slim server...")
-            execSync(`node ${compileScript} && node ${runScript}`, { stdio: "inherit" });
+            runScripts([compileScript], [runScript])
         }
     });
 
@@ -165,70 +172,34 @@ program
     .option("-S, --set <key>=<value>", "Set key value")
     .option("-R, --remove <key>", "Remove key")
     .action(async (params) => {
-        slimConfigCheck()
-
+        let config
         try {
-            let data = await readFile(path.join(root, "slimconfig.json"), 'utf8');
-            const res = JSON.parse(data);
-
-            if(params["keys"]) {
-                const args = params["keys"].split(spaceRegex).map(item => item.trim())
-
-                if(args.length > 0) {
-                    args.forEach(a => {
-                        a = a.replaceAll("--", "")
-                        if(a in res) {
-                            console.log(res[a])
-                        }
-                    })
-                }
-                else {
-                    console.log(res)
-                }
-            }
-            else if(params["set"]) {
-                const config = JSON.parse(fs.readFileSync(slimConfigPath, "utf8"));
-                const args = params["set"].split(spaceRegex).map(item => item.trim());
-
-                args.forEach(arg => {
-                    if (!arg.includes("=")) return;
-
-                    const [key, ...valueParts] = arg.split("=");
-
-                    const value = valueParts.join("=").trim();
-
-                    config[key.trim()] = parseValue(value);
-                });
-
-                fs.writeFileSync(
-                    slimConfigPath,
-                    JSON.stringify(config, null, 4),
-                    "utf8"
-                );
-            }
-            else if (params["remove"]) {
-                const config = JSON.parse(fs.readFileSync(slimConfigPath, "utf8"));
-                const keys = params["remove"]
-                    .split(spaceRegex)
-                    .map(item => item.trim())
-                    .filter(Boolean);
-
-                keys.forEach(key => {
-                    delete config[key];
-                });
-
-                fs.writeFileSync(
-                    slimConfigPath,
-                    JSON.stringify(config, null, 4),
-                    "utf8"
-                );
-            }
-            else {
-                const config = JSON.parse(fs.readFileSync(slimConfigPath, "utf8"));
-                console.log(config)
-            }
+            config = slimConfigRead()
         } catch (err) {
-            console.error(err);
+            error(`slimconfig.json is not valid JSON: ${err.message}`)
+            process.exitCode = 1
+            return
+        }
+
+        if(params.keys) {
+            for (const key of splitList(params.keys).map(key => key.replace(/^-+/, ""))) {
+                if(key in config) console.log(config[key])
+            }
+        }
+        else if(params.set) {
+            for (const arg of splitList(params.set)) {
+                const eq = arg.indexOf("=")
+                if(eq <= 0) continue
+                config[arg.slice(0, eq)] = parseValue(arg.slice(eq + 1))
+            }
+            writeSlimConfig(config)
+        }
+        else if(params.remove) {
+            for (const key of splitList(params.remove)) delete config[key]
+            writeSlimConfig(config)
+        }
+        else {
+            console.log(config)
         }
     });
 
@@ -313,12 +284,12 @@ program
                 }
 
                 if(githubPkg.version != pkg.version) {
-                    log(`Your version is not compatible with the latest version of Slim:
-    Current: ${githubPkg.version}
-    Your's: ${pkg.version}`)
+                    log(`A different Slim version is available:
+    Latest: ${githubPkg.version}
+    Yours: ${pkg.version}`)
                 }
                 else {
-                    log(`You on the latest Slim version`)
+                    log(`You are on the latest Slim version`)
                 }
             }
             catch (err) {

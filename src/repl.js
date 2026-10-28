@@ -1,6 +1,6 @@
 import repl from "node:repl"
 import vm from "node:vm"
-import { preprocess } from "./parser.js"
+import { preprocess } from "./syntax/index.js"
 import "./external/defaults.js"
 
 function slimEval(cmd, context, filename, callback) {

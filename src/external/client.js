@@ -1,4 +1,3 @@
-// Browser-safe runtime subset serialized into client handlers.
 
 export function log(...args) { console.log(...args) }
 export function warn(...args) { console.warn(...args) }
@@ -34,5 +33,4 @@ export function type(obj) {
 	return undefined
 }
 
-// Client declarations are emitted before the handler table.
 export const CLIENT_RUNTIME = [log, warn, error, info, debug, type]

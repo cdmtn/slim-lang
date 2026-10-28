@@ -109,18 +109,13 @@ export async function downloadGitHubRepo(
             `spm-${owner}-${repo}-${Date.now()}.tar.gz`
         );
 
-        await pipeline(
-            response.body,
-            createWriteStream(tempFile)
-        );
-
-        await fs.promises.mkdir(destination, {
-            recursive: true
-        });
-
-        await extractTarGz(tempFile, destination);
-
-        await fs.promises.unlink(tempFile);
+        try {
+            await pipeline(response.body, createWriteStream(tempFile));
+            await fs.promises.mkdir(destination, { recursive: true });
+            await extractTarGz(tempFile, destination);
+        } finally {
+            await fs.promises.rm(tempFile, { force: true });
+        }
 
         return {
             success: true,

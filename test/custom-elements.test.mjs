@@ -5,13 +5,12 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
-import { preprocess } from "../src/parser.js"
+import { preprocess } from "../src/syntax/index.js"
 
 const root = process.cwd()
 const outputDir = path.join(root, "dist", "__element_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
-// Node tests lowering and host wiring; browser tests cover custom-element registration.
 function runSlim(name, source) {
     mkdirSync(outputDir, { recursive: true })
     const { code } = transform(source, path.join(root, "__element_tests__", `${name}.slim`))

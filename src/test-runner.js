@@ -3,10 +3,10 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { pathToFileURL } from "node:url"
 import { transform } from "./transform.js"
-import { distDirName } from "./modulePaths.js"
+import { distDirName, PACKAGE_ROOT } from "./modulePaths.js"
 
 const root = process.cwd()
-const runtimeImport = pathToFileURL(path.resolve("src/external/defaults.js")).href
+const runtimeImport = pathToFileURL(path.join(PACKAGE_ROOT, "src/external/defaults.js")).href
 const outDir = path.resolve(distDirName(), "__slim_tests__")
 
 function findTests(target) {
@@ -44,12 +44,12 @@ export function runTests(target) {
     let failed = 0
 
     for (const file of files) {
-        const { code } = transform(fs.readFileSync(file, "utf8"), file)
+        const outFile = path.join(outDir, path.basename(file).replace(/\.slim$/, ".mjs"))
+        const { code } = transform(fs.readFileSync(file, "utf8"), file, { outFile })
         const executable = code.replace(
-            /^import\s+[^;]*defaults\.js";$/m,
+            /^import\s+[^;]*(?:defaults|core)\.js";$/m,
             `import ${JSON.stringify(runtimeImport)};`
         )
-        const outFile = path.join(outDir, path.basename(file).replace(/\.slim$/, ".mjs"))
         fs.writeFileSync(outFile, executable)
 
         console.log(`\n${path.relative(root, file)}`)

@@ -5,7 +5,7 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
-import { preprocess } from "../src/parser.js"
+import { preprocess } from "../src/syntax/index.js"
 
 const root = process.cwd()
 const outputDir = path.join(root, "dist", "__intdiv_tests__")

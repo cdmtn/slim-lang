@@ -64,10 +64,10 @@ test("a return inside a setup callback does not truncate the component body", ()
     assert.match(result.stdout, /class="guard"/)
 })
 
-test("a nested template literal inside a markup interpolation compiles", () => {
+test("markup assigned in the component body is interpolated as markup", () => {
     const result = runSlim("nested-template", `
         export component Badge(props) {
-            const extra = props.extra ? \`<b>\${props.extra}</b>\` : ""
+            const extra = props.extra ? <b>${"$"}{props.extra}</b> : ""
             return <div class="badge">${"$"}{extra}base</div>
         }
         log(Badge({ extra: "x" }).outerHTML)

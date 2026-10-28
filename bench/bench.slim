@@ -1,0 +1,46 @@
+const ADJECTIVES = ["pretty", "large", "big", "small", "tall", "short", "long", "handsome", "plain", "quaint", "clean", "elegant", "easy", "angry", "crazy", "helpful", "mushy", "odd", "unsightly", "adorable", "important", "inexpensive", "cheap", "expensive", "fancy"]
+const COLOURS = ["red", "yellow", "blue", "green", "pink", "brown", "purple", "brown", "white", "black", "orange"]
+const NOUNS = ["table", "chair", "house", "bbq", "desk", "car", "pony", "cookie", "sandwich", "burger", "pizza", "mouse", "keyboard"]
+
+let nextId = 1
+const pick = (list) => list[Math.round(Math.random() * 1000) % list.length]
+
+func build(count) {
+    const rows = new Array(count)
+    for (let i = 0; i < count; i++) {
+        rows[i] = { id: nextId++, label: `${pick(ADJECTIVES)} ${pick(COLOURS)} ${pick(NOUNS)}` }
+    }
+    return rows
+}
+
+component Bench() {
+    state rows = []
+    state selected = 0
+
+    window.slimBench = {
+        run: () => { rows = build(1000) },
+        runLots: () => { rows = build(10000) },
+        add: () => { rows.push(...build(1000)) },
+        update: () => {
+            for (let i = 0; i < rows.length; i += 10) rows[i].label += " !!!"
+        },
+        select: () => { selected = rows[5].id },
+        swap: () => {
+            const a = rows[1]
+            rows[1] = rows[998]
+            rows[998] = a
+        },
+        remove: () => { rows.splice(3, 1) },
+        clear: () => { rows = [] }
+    }
+
+    return <table>
+        <tbody>${rows.map(row => <tr key=${row.id} class=${selected == row.id ? "danger" : ""}>
+            <td>${row.id}</td>
+            <td><a onClick=${() => { selected = row.id }}>${row.label}</a></td>
+            <td><a class="remove"><span>x</span></a></td>
+        </tr>)}</tbody>
+    </table>
+}
+
+document.getElementById("slim").append(Bench())

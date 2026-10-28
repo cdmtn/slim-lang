@@ -1,4 +1,3 @@
-// Source frames require a host-provided file reader.
 let readSource = null
 
 export function setSourceReader(reader) {
@@ -41,7 +40,7 @@ function isInternalFrame(normalized) {
         normalized.includes("/src/handlers/") ||
         normalized.includes("/src/compile.js") ||
         normalized.includes("/src/transform.js") ||
-        normalized.includes("/src/parser.js")
+        normalized.includes("/src/syntax/")
     )
 }
 
@@ -166,7 +165,7 @@ export class LangError extends Error {
 }
 
 export class StructError extends LangError {
-    constructor(m, meta) { super(m, "StructError", meta) }
+    constructor(m, meta, tag = "StructError") { super(m, tag, meta) }
 }
 export class StructPassedError extends LangError {
     constructor(m, meta) { super(m, "StructPassedError", meta) }
@@ -175,7 +174,7 @@ export class StructExpectError extends LangError {
     constructor(m, meta) { super(m, "StructExpectError", meta) }
 }
 export class StructResultError extends StructError {
-    constructor(m, meta) { super(m, "StructResultError", meta) }
+    constructor(m, meta) { super(m, meta, "StructResultError") }
 }
 
 export class TypeError_ extends LangError {
@@ -193,10 +192,10 @@ export class EnumError extends LangError {
     constructor(m, meta) { super(m, "EnumError", meta) }
 }
 
-export class UseError extends Error {
+export class UseError extends LangError {
     constructor(m, meta) { super(m, "UseError", meta) }
 }
 
-export class TypeDefError extends TypeError {
+export class TypeDefError extends LangError {
     constructor(m, meta) { super(m, "TypeDefError", meta) }
 }

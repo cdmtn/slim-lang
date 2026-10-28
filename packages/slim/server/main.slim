@@ -140,7 +140,18 @@ class Server {
 
         this.get(path, async (req, res, params) => {
             const isDev = this.dev
-			let html = render({ dev: isDev, params });
+            let html = null
+
+            if (options && "hydrate" in options) {
+                const props = { dev: isDev, params, url: req.url }
+                const rendered = await renderToStringAsync(() => render(props))
+                const data = JSON.stringify(props).replace(/</g, "\\u003c")
+                html = `<div id="slim-root">${rendered.html}</div>` + rendered.script +
+                    `<script>window.__slimProps = ${data}</script>` +
+                    `<script type="module" src="${options.hydrate}"></script>`
+            } else {
+                html = render({ dev: isDev, params, url: req.url })
+            }
 			const eventsScript = __flush_events__();
 
             if(kindof html == "promise") {

@@ -8,7 +8,6 @@ import os from "node:os"
 const root = process.cwd()
 const compiler = path.join(root, "src", "compile.js")
 
-// Cross-module types require a real project build.
 function build(files) {
     const dir = path.join(os.tmpdir(), `slim-cross-${Math.random().toString(36).slice(2)}`)
     mkdirSync(dir, { recursive: true })

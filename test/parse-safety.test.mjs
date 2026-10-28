@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { preprocess } from "../src/parser.js"
+import { preprocess } from "../src/syntax/index.js"
 
 function lower(source) {
     return preprocess(source, "x.slim").code
@@ -44,9 +44,9 @@ test("a || continuation line is not consumed by the pipe transform", () => {
     assert.match(code, /var x = 1/)
 })
 
-test("real pipe chains still lower to method calls", () => {
-    const code = lower(`nums\n| map(n * 2)\n| filter(n > 2)`)
-    assert.match(code, /nums\.map\(.*\)\.filter\(/)
+test("an old pipe step is an error, not a silent bitwise OR", () => {
+    assert.throws(() => lower(`nums\n| map(n => n * 2)`), /Pipe steps \("\| map\(\.\.\.\)"\) were removed: chain the method instead, "\.map\(\.\.\.\)"/)
+    assert.match(lower(`const flags = 1 |\n    read(2)`), /1 \| read\(2\)/)
 })
 
 test("the lock keyword is not matched as a substring of an identifier", () => {
@@ -79,7 +79,7 @@ test("a comma inside a default string does not split the parameter list", () => 
 
 test("generics nest past two levels in an annotation", () => {
     const code = lower(`let m: Map<string, Array<Map<int, string>>> = new Map()`)
-    assert.match(code, /__typed_variable__\(new Map\(\), "Map<string, Array<Map<int, string>>>", "m"\)/)
+    assert.match(code, /__typed_variable__\(new Map\(\), "Map<string, Map<int, string>\[\]>", "m"\)/)
 })
 
 test("a union type may continue on the next line", () => {
@@ -89,7 +89,7 @@ test("a union type may continue on the next line", () => {
 
 test("and/or stay identifiers where an operator cannot appear", () => {
     const code = lower(`const o = { and: 1, or: 2 }\nlog(o.and)`)
-    assert.match(code, /\{ and: 1, or: 2 \}/)
+    assert.match(code, /\{\s*and: 1,\s*or: 2\s*\}/)
     assert.match(code, /log\(o\.and\)/)
 })
 
@@ -106,7 +106,7 @@ test("a match nested in a case result is lowered too", () => {
 
 test("a struct method may nest calls in its body", () => {
     const code = lower(`struct P {\n    x: int\n    scaled() { return Math.max(1, Math.min(2, this.x)) }\n}`)
-    assert.match(code, /"scaled": function\(\) \{ return Math\.max\(1, Math\.min\(2, this\.x\)\) \}/)
+    assert.match(code, /"scaled": function \(\) \{\s*return Math\.max\(1, Math\.min\(2, this\.x\)\);\s*\}/)
 })
 
 test("bars that are not a pipe chain are left alone", () => {

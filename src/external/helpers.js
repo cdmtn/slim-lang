@@ -1,25 +1,5 @@
-import { parseHTML } from "linkedom";
 import { CLIENT_RUNTIME } from "./client.js";
-
-export function getFunctionBody(fn) {
-    const str = fn.toString();
-    return str.substring(str.indexOf('{') + 1, str.lastIndexOf('}')).trim();
-}
-
-export const idify = (text) => {
-    if (!text) return '';
-
-    return btoa(text + Math.random(100 * 9999) * 100)
-        .toString()
-        .trim()
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/[\s_-]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-};
-
+import { Signal } from "./reactive.js";
 
 const VOID_ELEMENTS = new Set([
 	"area", "base", "br", "col", "embed", "hr", "img", "input",
@@ -27,15 +7,46 @@ const VOID_ELEMENTS = new Set([
 ]);
 
 const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+const UNESCAPED_TEXT_ELEMENTS = new Set(["script", "style"]);
 
-// Use the platform DOM or detached linkedom nodes; static import supports bundler stubs.
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const NAMED_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+
+export function escapeHtml(value) {
+	return String(value).replace(/[&<>"']/g, ch => ESCAPES[ch]);
+}
+
+export function decodeEntities(text) {
+	if (!text.includes("&")) return text;
+	return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity) => {
+		if (entity[0] !== "#") return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
+		const code = entity[1] === "x" || entity[1] === "X"
+			? parseInt(entity.slice(2), 16)
+			: parseInt(entity.slice(1), 10);
+		return code <= 0x10ffff ? String.fromCodePoint(code) : match;
+	});
+}
+
+export class SafeHtml {
+	constructor(value) {
+		this.value = value;
+	}
+	toString() {
+		return this.value;
+	}
+}
+
+export function raw(html) {
+	return html instanceof SafeHtml ? html : new SafeHtml(html == null ? "" : String(html));
+}
+
 const hasNativeDom =
 	typeof globalThis.document !== "undefined" &&
 	typeof globalThis.HTMLElement !== "undefined";
 
 const { document: slimDocument, HTMLElement } = hasNativeDom
 	? globalThis
-	: parseHTML("<!doctype html><html><head></head><body></body></html>");
+	: (await import("linkedom")).parseHTML("<!doctype html><html><head></head><body></body></html>");
 
 export { slimDocument, HTMLElement };
 
@@ -108,13 +119,17 @@ function parseAttributes(html, i) {
 				while (i < len && !isSpace(html[i]) && html[i] !== ">" && !(html[i] === "/" && html[i + 1] === ">")) i++;
 				value = html.slice(start, i);
 			}
-			attrs[name] = value;
+			attrs[name] = decodeEntities(value);
 		} else {
 			attrs[name] = true;
 		}
 	}
 
 	return { attrs, selfClosing, end: i };
+}
+
+export function parseAttributeList(text) {
+	return parseAttributes(text + ">", 0).attrs;
 }
 
 function findRawClose(html, lower, from, tag) {
@@ -182,8 +197,8 @@ function parseNodes(html) {
 				if (!selfClosing && !VOID_ELEMENTS.has(tag)) {
 					if (RAW_TEXT_ELEMENTS.has(tag)) {
 						const { contentEnd, next } = findRawClose(html, lower, i, tag);
-						const raw = html.slice(i, contentEnd);
-						if (raw) el.children.push(textNode(raw));
+						const content = html.slice(i, contentEnd);
+						if (content) el.children.push(textNode(UNESCAPED_TEXT_ELEMENTS.has(tag) ? content : decodeEntities(content)));
 						i = next;
 					} else {
 						stack.push(el);
@@ -199,7 +214,7 @@ function parseNodes(html) {
 
 		const nextLt = html.indexOf("<", i);
 		const end = nextLt === -1 ? len : nextLt;
-		top().children.push(textNode(html.slice(i, end)));
+		top().children.push(textNode(decodeEntities(html.slice(i, end))));
 		i = end;
 	}
 
@@ -207,7 +222,7 @@ function parseNodes(html) {
 }
 
 function escapeAttribute(value) {
-	return String(value).replace(/"/g, "&quot;");
+	return String(value).replace(/[&"]/g, ch => ESCAPES[ch]);
 }
 
 function renderAttributes(attrs) {
@@ -221,7 +236,7 @@ function renderAttributes(attrs) {
 	return out;
 }
 
-export function renderVNode(node) {
+export function renderVNode(node, rawText = false) {
 	if (node == null) return "";
 	if (typeof node === "string") return node;
 	if (Array.isArray(node)) return node.map(renderVNode).join("");
@@ -231,15 +246,16 @@ export function renderVNode(node) {
 		case "node":
 			return String(node.node);
 		case "text":
-			return node.value ?? "";
+			return rawText ? node.value ?? "" : escapeHtml(node.value ?? "").replace(/&quot;|&#39;/g, m => m === "&quot;" ? '"' : "'");
 		case "comment":
 			return `<!--${node.value ?? ""}-->`;
 		case "fragment":
-			return (node.children || []).map(renderVNode).join("");
+			return (node.children || []).map(child => renderVNode(child)).join("");
 		case "element": {
 			const open = `<${node.tag}${renderAttributes(node.attrs)}>`;
 			if (VOID_ELEMENTS.has(node.tag)) return open;
-			const inner = (node.children || []).map(renderVNode).join("");
+			const unescaped = UNESCAPED_TEXT_ELEMENTS.has(node.tag);
+			const inner = (node.children || []).map(child => renderVNode(child, unescaped)).join("");
 			return `${open}${inner}</${node.tag}>`;
 		}
 		default:
@@ -288,7 +304,6 @@ function fragmentToHtml() {
 	return out;
 }
 
-// Park live nodes while parsing templates to retain their listeners and methods.
 const NODE_MARKER = "slim-node:";
 let parkedNodes = [];
 
@@ -298,9 +313,15 @@ function isDomNode(value) {
 
 function stringifyChild(value) {
 	if (value == null || value === false) return "";
+	if (value instanceof SafeHtml) return value.value;
+	if (value instanceof VNode) return renderVNode(value);
 	if (Array.isArray(value)) return value.map(stringifyChild).join("");
 	if (isDomNode(value)) return `<!--${NODE_MARKER}${parkedNodes.push(value) - 1}-->`;
-	return String(value);
+	return escapeHtml(value);
+}
+
+function insideTag(html) {
+	return html.lastIndexOf("<") > html.lastIndexOf(">");
 }
 
 function reviveParked(node) {
@@ -314,8 +335,6 @@ function reviveParked(node) {
 	return node;
 }
 
-// Delegated handlers serialize for SSR and retain live closures on the client.
-
 let eventHandlers = [];
 
 function registerEventHandler(event, fn) {
@@ -326,7 +345,6 @@ function registerEventHandler(event, fn) {
 
 const boundEvents = new Set();
 
-// Client dispatch keeps closures and binds once per event type.
 export function __bind_events__() {
 	for (const { event } of eventHandlers) {
 		if (boundEvents.has(event)) continue;
@@ -367,7 +385,6 @@ export function __flush_events__() {
 	return script.replace(/<\/script/gi, "<\\/script");
 }
 
-// Run lifecycle hooks once; non-browser environments connect eagerly.
 const __lifecycleRecords__ = new Set();
 let __lifecycleObserver__ = null;
 
@@ -414,8 +431,6 @@ export function __lifecycle__(el, connectFns, unmountFns) {
 	__lifecycleRecords__.add(r);
 }
 
-// Custom elements render into their host and use platform lifecycle callbacks.
-
 export function __create_host__(tag) {
 	const doc = typeof document !== "undefined" ? document : slimDocument;
 	return doc.createElement(tag);
@@ -423,15 +438,26 @@ export function __create_host__(tag) {
 
 export function __adopt_into__(host, el) {
 	if (el.nodeType === 11) {
-		for (const child of [...el.childNodes]) host.appendChild(child);
+		for (const child of [...el.childNodes]) if (child.parentNode !== host) host.appendChild(child);
 		return;
 	}
 
-	host.appendChild(el);
+	if (el.parentNode !== host) host.appendChild(el);
+}
+
+function liveProps(signal) {
+	return new Proxy({}, {
+		get: (_, key) => signal.v[key],
+		has: (_, key) => key in signal.v,
+		ownKeys: () => Reflect.ownKeys(signal.v),
+		getOwnPropertyDescriptor(_, key) {
+			const value = signal.v;
+			return key in value ? { value: value[key], enumerable: true, configurable: true } : undefined;
+		}
+	});
 }
 
 export function __define_element__(tag, factory) {
-	// linkedom cannot define custom elements.
 	if (typeof customElements === "undefined" || !hasNativeDom) return;
 	if (customElements.get(tag)) return;
 
@@ -440,8 +466,8 @@ export function __define_element__(tag, factory) {
 			super();
 			this.__slim__ = null;
 			this.__props__ = null;
+			this.__slim_signal__ = null;
 
-			// Restore properties assigned before custom-element upgrade.
 			if (Object.prototype.hasOwnProperty.call(this, "props")) {
 				const pending = this.props;
 				delete this.props;
@@ -455,10 +481,9 @@ export function __define_element__(tag, factory) {
 
 		set props(value) {
 			this.__props__ = value ?? {};
-			if (this.__slim__) this.__slim_render__();
+			if (this.__slim_signal__) this.__slim_signal__.v = this.__slim_props__();
 		}
 
-		// Convert attributes to component props, including camel-cased data attributes.
 		__slim_props__() {
 			const fromAttributes = {};
 
@@ -476,9 +501,18 @@ export function __define_element__(tag, factory) {
 		}
 
 		__slim_render__() {
-			for (const fn of this.__slim__?.unmounts ?? []) fn(this);
-			this.replaceChildren();
-			this.__slim__ = factory(this.__slim_props__(), this);
+			const signal = this.__slim_signal__ = new Signal(this.__slim_props__());
+			if (this.hasAttribute("hydrate") && typeof globalThis.hydrate === "function") {
+				this.__slim__ = globalThis.hydrate(() => factory(liveProps(signal), this), this);
+			} else {
+				this.replaceChildren();
+				this.__slim__ = factory(liveProps(signal), this);
+			}
+
+			if (typeof MutationObserver !== "undefined") {
+				new MutationObserver(() => { signal.v = this.__slim_props__(); })
+					.observe(this, { attributes: true });
+			}
 		}
 
 		connectedCallback() {
@@ -493,8 +527,6 @@ export function __define_element__(tag, factory) {
 }
 
 export function __html__(strings, ...values) {
-	parkedNodes = [];
-
 	let out = strings[0];
 
 	for (let i = 0; i < values.length; i++) {
@@ -508,6 +540,8 @@ export function __html__(strings, ...values) {
 				const id = registerEventHandler(event, value);
 				out += ` data-slim-on-${event}="${id}"`;
 			}
+		} else if (insideTag(out) && /=\s*$/.test(out)) {
+			out += `"${escapeHtml(value instanceof SafeHtml ? value.value : value ?? "")}"`;
 		} else {
 			out += stringifyChild(value);
 		}
@@ -515,11 +549,7 @@ export function __html__(strings, ...values) {
 		out += strings[i + 1];
 	}
 
-	return out;
-}
-
-export function htmlToElement(input, doc = slimDocument) {
-	return vnodeToElement(htmlToVdom(input), doc);
+	return new SafeHtml(out);
 }
 
 export function __resolve_bem__(vnode, scope = "") {
@@ -548,7 +578,7 @@ export function __resolve_bem__(vnode, scope = "") {
 export function htmlToVdom(input) {
 	if (input instanceof VNode) return input;
 
-	const html = input == null ? "" : String(input);
+	const html = input == null ? "" : input instanceof SafeHtml ? input.value : String(input);
 	const nodes = parseNodes(html).map(reviveParked);
 	parkedNodes = [];
 
@@ -557,7 +587,6 @@ export function htmlToVdom(input) {
 	if (meaningful.length === 0) return fragmentNode([]);
 	if (meaningful.length === 1) {
 		const only = meaningful[0];
-		// Wrap revived DOM nodes as VNodes.
 		return isDomNode(only) ? new VNode({ type: "node", node: only }) : only;
 	}
 	return fragmentNode(meaningful);

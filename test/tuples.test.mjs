@@ -32,8 +32,9 @@ test("a tuple-typed value validates element types positionally", () => {
 })
 
 test("a tuple rejects the wrong length or element types", () => {
-    assert.notEqual(runSlim("bad-len", `let p: [int, string] = [1]`).status, 0)
-    assert.notEqual(runSlim("bad-type", `let p: [int, string] = ["a", 1]`).status, 0)
+    assert.notEqual(runSlim("bad-len", `let p: [int, string] = JSON.parse("[1]")`).status, 0)
+    assert.notEqual(runSlim("bad-type", `let p: [int, string] = JSON.parse('["a", 1]')`).status, 0)
+    assert.throws(() => runSlim("static-len", `let p: [int, string] = [1]`), /"p" expects \[int, string\], got \[int\]/)
 })
 
 test("tuple types work in parameters and struct fields", () => {

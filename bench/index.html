@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Slim vs React</title></head>
+<body>
+<pre id="out">running…</pre>
+<div id="slim"></div>
+<div id="react18"></div>
+<div id="react19"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script type="module">
+import { compare } from "./harness.js"
+import React19 from "https://esm.sh/react@19.1.0"
+import { createRoot as createRoot19 } from "https://esm.sh/react-dom@19.1.0/client"
+import { flushSync as flushSync19 } from "https://esm.sh/react-dom@19.1.0"
+
+const A = ["pretty", "large", "big", "small", "tall", "short", "long", "handsome", "plain", "quaint", "clean", "elegant", "easy", "angry", "crazy", "helpful", "mushy", "odd", "unsightly", "adorable", "important", "inexpensive", "cheap", "expensive", "fancy"]
+const C = ["red", "yellow", "blue", "green", "pink", "brown", "purple", "brown", "white", "black", "orange"]
+const N = ["table", "chair", "house", "bbq", "desk", "car", "pony", "cookie", "sandwich", "burger", "pizza", "mouse", "keyboard"]
+let nextId = 1
+const pick = list => list[Math.round(Math.random() * 1000) % list.length]
+const build = count => Array.from({ length: count }, () => ({ id: nextId++, label: `${pick(A)} ${pick(C)} ${pick(N)}` }))
+
+// the keyed React implementation from js-framework-benchmark, mounted with a given React
+function mountReact(React, createRoot, flushSync, container) {
+    const h = React.createElement
+    const Row = React.memo(({ item, selected, onSelect }) =>
+        h("tr", { className: selected ? "danger" : "" },
+            h("td", null, item.id),
+            h("td", null, h("a", { onClick: () => onSelect(item.id) }, item.label)),
+            h("td", null, h("a", { className: "remove" }, h("span", null, "x")))))
+
+    let api
+    function App() {
+        const [rows, setRows] = React.useState([])
+        const [selected, setSelected] = React.useState(0)
+        const onSelect = React.useCallback(id => setSelected(id), [])
+        api = {
+            run: () => setRows(build(1000)),
+            runLots: () => setRows(build(10000)),
+            add: () => setRows(rows => rows.concat(build(1000))),
+            update: () => setRows(rows => {
+                const next = rows.slice()
+                for (let i = 0; i < next.length; i += 10) next[i] = { ...next[i], label: next[i].label + " !!!" }
+                return next
+            }),
+            select: () => setRows(rows => { setSelected(rows[5].id); return rows }),
+            swap: () => setRows(rows => {
+                const next = rows.slice()
+                const a = next[1]; next[1] = next[998]; next[998] = a
+                return next
+            }),
+            remove: () => setRows(rows => rows.filter((_, i) => i !== 3)),
+            clear: () => setRows([])
+        }
+        return h("table", null, h("tbody", null, rows.map(item =>
+            h(Row, { key: item.id, item, selected: selected === item.id, onSelect }))))
+    }
+    flushSync(() => createRoot(container).render(h(App)))
+    return Object.fromEntries(Object.keys(api).map(key => [key, () => flushSync(() => api[key]())]))
+}
+
+const react18 = mountReact(React, ReactDOM.createRoot, ReactDOM.flushSync, document.getElementById("react18"))
+const react19 = mountReact(React19, createRoot19, flushSync19, document.getElementById("react19"))
+await import("./bench.js")
+const slim = Object.fromEntries(Object.keys(window.slimBench).map(key => [key, () => batch(() => window.slimBench[key]())]))
+setTimeout(() => compare({ slim, "react 18.3.1": react18, "react 19.1.0": react19 }), 200)
+</script>
+</body>
+</html>

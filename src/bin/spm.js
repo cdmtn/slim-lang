@@ -362,7 +362,7 @@ spm
 								console.log("\n")
 								spmlog(formatError(`No application has been installed on the "${githubRepo}" repository\n`))
 								spmlog("Open:", formatBold.underline("https://github.com/apps/slim-package-manager/installations/new"))
-								spmlog("Press Enter after installation...\n")
+								spmlog(`Install the app, then run ${formatItalic(`${spm.name()} publish ${name}`)} again\n`)
 
 								return fail(`No application has been installed on the "${githubRepo}" repository`)
 							}
@@ -373,15 +373,11 @@ spm
 									contentPath: packagePath
 								})
 
-								const packageInfoReq = await getPackage({
-									name: name
-								})
-
 								if (!githubPublishReq.success) {
 									return fail("Github publish:", githubPublishReq.msg)
 								}
 								else {
-									const isPackagesExists = packageInfoReq.success
+									const isPackagesExists = (await getPackage({ name })).success
 
 									if (isPackagesExists) {
 										console.log("\nPackage is already exists... updating")
@@ -408,7 +404,7 @@ spm
 											})
 
 											if (!updateReq.success) {
-												return fail("Failed to push the new version to GitHub")
+												return fail("Failed to push the new version to GitHub:", updateReq.msg)
 											}
 											else {
 												const publishedVer = updateReq.version

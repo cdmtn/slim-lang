@@ -84,7 +84,6 @@ test("a typed parameter carries its type into the body", () => {
 })
 
 test("narrowing a union to one of its arms is allowed", () => {
-    // Runtime narrowing allows this assignment.
     accepted(`let v: int | string = 1\nif (kindof v == "int") { let n: int = v }`)
     accepted(`let v: string? = "a"\nlet s: string = v`)
     assert.match(messages(`let v: int | string = 1\nlet b: bool = v`)[0], /"b" expects bool/)
@@ -193,11 +192,11 @@ test("a call to a function with a return type infers its result", () => {
         /"s" expects string, got int/)
     accepted(`func f(a: int) -> int { return a }\nlet n: int = f(1)`)
     accepted(`const f = (a: int) -> int => a * 2\nlet n: int = f(1)`)
-    accepted(`func f(a: int) { return "anything" }\nlet n: int = f(1)`)
+    assert.match(messages(`func f(a: int) { return "anything" }\nlet n: int = f(1)`)[0], /"n" expects int, got string/)
 })
 
 test("Array<T> and T[] are the same type", () => {
-    assert.match(messages(`let xs: Array<int> = ["a"]`)[0], /"xs" expects Array<int>, got string\[\]/)
+    assert.match(messages(`let xs: Array<int> = ["a"]`)[0], /"xs" expects int\[\], got string\[\]/)
     accepted(`let xs: Array<int> = [1, 2]`)
     accepted(`let xs: int[] = [1, 2]\nlet ys: Array<int> = xs`)
 })

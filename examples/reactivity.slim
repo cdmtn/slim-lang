@@ -1,0 +1,20 @@
+component Counter() {
+    state count = 0
+    state items: string[] = []
+    const double = count * 2
+
+    effect(() => {
+        log(`Clicks: ${count}`)
+    })
+
+    return <div>
+        <button onClick=${() => count++}>${count} × 2 = ${double}</button>
+        <button onClick=${() => items.push("item " + count)}>add</button>
+        ${count > 5 ? <p>That's a lot</p> : null}
+        <ul>${items.map(item => <li>${item}</li>)}</ul>
+    </div>
+}
+component Badge({ count, label = "items" }) {
+    return <span title=${count}>${count} ${label}</span>
+}
+log(Badge({ count: 2 }).outerHTML) // <span title="2">2 items</span>

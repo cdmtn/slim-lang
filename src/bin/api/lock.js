@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { rootPath } from "../helpers.js"
+import { readJson } from "../../modulePaths.js"
 
 export function lockFile(dir = rootPath) {
 	return path.join(dir, "spm.lock.json")
@@ -8,7 +9,7 @@ export function lockFile(dir = rootPath) {
 
 export function readLock(dir = rootPath) {
 	try {
-		const data = JSON.parse(fs.readFileSync(lockFile(dir), "utf8"))
+		const data = readJson(lockFile(dir))
 		if (!data.packages || typeof data.packages !== "object") data.packages = {}
 		return data
 	} catch {

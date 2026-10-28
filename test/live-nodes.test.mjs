@@ -122,17 +122,17 @@ test("an embedded node still serialises for a server render", () => {
     assert.match(result.stdout, /<div class="wrap"><span class="inner">html<\/span><\/div>/)
 })
 
-test("plain values are still interpolated as markup", () => {
+test("plain strings are escaped, raw() and nested markup are not", () => {
     const result = runSlim("plain", `
         component Wrapper(props) {
-            return <div>${S}{"<b>raw</b>"}${S}{null}${S}{false}${S}{42}</div>
+            return <div title=${S}{"a b"}>${S}{"<b>x</b> & y"}${S}{raw("<i>raw</i>")}${S}{[1, 2].map(n => <u>${S}{n}</u>)}${S}{null}${S}{false}${S}{42}</div>
         }
 
         log(Wrapper({}).outerHTML)
     `)
 
     assert.equal(result.status, 0, result.stderr)
-    assert.match(result.stdout, /<div><b>raw<\/b>42<\/div>/)
+    assert.match(result.stdout, /<div title="a b">&lt;b&gt;x&lt;\/b&gt; &amp; y<i>raw<\/i><u>1<\/u><u>2<\/u>42<\/div>/)
 })
 
 test("an element component can wrap a configured generic component", () => {

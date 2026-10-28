@@ -7,9 +7,13 @@ const slimExtension = ".slim"
 
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
-function readConfig() {
+export function readJson(file) {
+    return JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""))
+}
+
+export function readConfig() {
     try {
-        return JSON.parse(fs.readFileSync(path.join(process.cwd(), "slimconfig.json"), "utf8"))
+        return readJson(path.join(process.cwd(), "slimconfig.json"))
     } catch {
         return {}
     }
@@ -62,8 +66,16 @@ function isNodeModule(raw) {
     return fs.existsSync(path.resolve("node_modules", bareName(raw)))
 }
 
+const outputOverrides = new Map()
+
+export function setOutputPath(slimFile, outFile) {
+    outputOverrides.set(path.resolve(slimFile), path.resolve(outFile))
+}
+
 export function getDistPath(slimFile) {
     const abs = path.resolve(slimFile)
+    if (outputOverrides.has(abs)) return outputOverrides.get(abs)
+
     const srcRoot = path.resolve("src")
     const projectRoot = path.resolve(".")
     const shippedPackages = path.join(PACKAGE_ROOT, "packages")
@@ -80,7 +92,6 @@ export function getDistPath(slimFile) {
     } else if (isWithin(projectRoot, abs)) {
         relative = path.relative(projectRoot, abs)
     } else {
-        // Drop leading "../" so out-of-project sources can't escape the dist dir.
         const stripped = path.relative(projectRoot, abs).split(path.sep).filter(seg => seg !== "..")
         relative = stripped.length ? path.join(...stripped) : path.basename(abs)
     }
@@ -118,14 +129,13 @@ export function resolveSlimSource(raw, fromFile) {
     return localSource
 }
 
-export function resolveSlimImport(raw, fromFile) {
+export function resolveSlimImport(raw, fromFile, distFrom = getDistPath(fromFile)) {
     if (raw.endsWith(".js")) return raw
 
     const slimSource = resolveSlimSource(raw, fromFile)
     if (slimSource === null) return raw
 
     const distTarget = getDistPath(slimSource)
-    const distFrom = getDistPath(fromFile)
     const relative = path.relative(path.dirname(distFrom), distTarget).replace(/\\/g, "/")
 
     return relative.startsWith(".") ? relative : "./" + relative

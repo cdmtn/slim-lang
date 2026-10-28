@@ -1,14 +1,16 @@
-// Portable core runtime with no Node or DOM dependencies.
 
 import {
     StructPassedError, StructError, StructExpectError, ArgumentDeclarationTypeError,
-    EnumError
+    EnumError, formatError, resolveErrorLocation
 } from "./classErrors.js"
 import {
     SlimVariableType, SlimVariableTypes, Struct, Component, Enum, EnumValue,
     isSameType
 } from "./types.js"
-import { formatError, resolveErrorLocation } from "./classErrors.js"
+import { ANY, readType, formatType, substituteType } from "./typeSyntax.js"
+import { REACTIVE_GLOBALS, Signal, __computed__, batch } from "./reactive.js"
+
+export { effect, watch, untrack, batch, onCleanup, resource, createContext, provide, inject, catchError } from "./reactive.js"
 
 const __structs__ = {}
 const __enums__ = {}
@@ -74,51 +76,49 @@ export function __handle_sync_error__(err) {
     finalizeError(err)
 }
 
-function logProcessed(args) {
-    return args.map(arg => {
-        if (Type.isTyped(arg) && "value" in arg) {
-            return arg.value
-        }
-        if (Type.isTyped(arg) && "scheme" in arg) {
-            return arg.scheme
-        }
-        return arg
-    })
+function unwrap(arg) {
+    if (!Type.isTyped(arg)) return arg
+    if ("value" in arg) return arg.value
+    if ("scheme" in arg) return arg.scheme
+    return arg
 }
-export const log = (...args) => {
-    const processed = logProcessed(args)
-    console.log(...processed)
-}
-export const warn = (...args) => {
-    const processed = logProcessed(args)
-    console.warn(...processed)
-}
-export const error = (...args) => {
-    const processed = logProcessed(args)
-    console.error(...processed)
-}
-export const info = (...args) => {
-    const processed = logProcessed(args)
-    console.info(...processed)
-}
-export const debug = (...args) => {
-    console.log(...args)
-}
+
+export const log = (...args) => console.log(...args.map(unwrap))
+export const warn = (...args) => console.warn(...args.map(unwrap))
+export const error = (...args) => console.error(...args.map(unwrap))
+export const info = (...args) => console.info(...args.map(unwrap))
+export const debug = (...args) => console.log(...args)
 
 export const PI = Math.PI
 
 const __test_stats__ = { passed: 0, failed: 0 }
 
-export function test(name, fn) {
+const testGroups = []
+let testQueue = Promise.resolve()
+
+export function describe(name, fn) {
+    testGroups.push(name)
     try {
         fn()
-        __test_stats__.passed++
-        console.log(`  ✓ ${name}`)
-    } catch (err) {
-        __test_stats__.failed++
-        if (typeof process !== "undefined") process.exitCode = 1
-        console.log(`  ✗ ${name}\n      ${err?.message ?? err}`)
+    } finally {
+        testGroups.pop()
     }
+}
+
+export function test(name, fn) {
+    const title = [...testGroups, name].join(" › ")
+
+    testQueue = testQueue.then(async () => {
+        try {
+            await fn()
+            __test_stats__.passed++
+            console.log(`  ✓ ${title}`)
+        } catch (err) {
+            __test_stats__.failed++
+            if (typeof process !== "undefined") process.exitCode = 1
+            console.log(`  ✗ ${title}\n      ${err?.message ?? err}`)
+        }
+    })
 }
 
 export function assert(condition, message = "assertion failed") {
@@ -152,21 +152,14 @@ export class Type {
         return type(obj) == "object"
     }
     static isTyped(obj) {
-        if (obj instanceof SlimVariableType || obj instanceof EnumValue || obj instanceof Struct) {
-            return true
-        }
-        else {
-            return false
-        }
+        return obj instanceof SlimVariableType || obj instanceof EnumValue || obj instanceof Struct
     }
     static isAnyArray(obj) {
-        if (type(obj) == "array") return true
-        else if (type(obj).endsWith("[]")) return true
-        else return false
+        return Array.isArray(obj)
     }
 
-    static isRegistredCustom(type) {
-        return Object.keys(__custom_types__).includes(type)
+    static isRegistredCustom(name) {
+        return Object.hasOwn(__custom_types__, name)
     }
 
     static Customs = __custom_types__
@@ -177,57 +170,39 @@ export class Debug {
     }
 }
 
-export function type(obj, properties = {}) {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    const urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/
+const ARRAY_KINDS = ["undefined", "string", "int", "float", "object", "enum", "struct", "array"]
 
-    const isArray = (obj) => {
-        return typeof obj === "object" && Array.isArray(obj)
-    }
-    const isTypedArray = (arr, t) => {
-        return arr.every(element => type(element) === t)
-    }
-    const isTypedOfArray = (arr, t) => {
-        return arr.every(element => typeof element === t)
-    }
+function arrayType(items) {
+    if (items.length === 0) return "null[]"
 
+    const kinds = new Set(items.map(item => type(item)))
+    if (kinds.size === 1) {
+        const [kind] = kinds
+        if (kind === "undefined") return "null[]"
+        if (ARRAY_KINDS.includes(kind)) return `${kind}[]`
+    }
+    if ([...kinds].every(kind => kind === "int" || kind === "float" || kind === "NaN")) return "number[]"
+    return "array"
+}
+
+export function type(obj) {
     if (obj === null) return "null"
     if (obj === undefined) return "undefined"
     if (Number.isNaN(obj)) return "NaN"
 
-    // The optional DOM layer requires structural element detection.
-    if (obj && typeof obj === "object" && obj.nodeType === 1) return "element"
-    if (obj && obj.nodeType === 11) return "fragment"
+    if (typeof obj === "object" && obj.nodeType === 1) return "element"
+    if (typeof obj === "object" && obj.nodeType === 11) return "fragment"
 
-    if(typeof obj == "function" && obj.__type__ == true) return "type"
+    if (typeof obj === "function" && obj.__type__ === true) return "type"
+    if (obj instanceof SlimVariableType) return obj.kind
 
-    if (typeof obj == "object" && obj instanceof SlimVariableType) {
-        return obj.kind
+    if (typeof obj === "object" && !Array.isArray(obj)) {
+        if (obj.type === Struct) return "struct"
+        if (obj.type instanceof Enum || obj instanceof EnumValue) return "enum"
     }
 
-    if (typeof obj == "object" && !Array.isArray(obj) && "type" in obj && obj.type == Struct) {
-        return "struct"
-    }
-    if (typeof obj == "object" && !Array.isArray(obj) && "type" in obj && obj.type instanceof Enum) {
-        return "enum"
-    }
-    if (typeof obj == "object" && !Array.isArray(obj) && obj instanceof EnumValue) {
-        return "enum"
-	}
-
-    if (typeof obj === "function" && obj.__component__ == true) return "component"
-
-    if (isArray(obj) && isTypedArray(obj, "undefined")) return "null[]"
-    if (isArray(obj) && isTypedArray(obj, "string")) return "string[]"
-    if (isArray(obj) && isTypedArray(obj, "int")) return "int[]"
-    if (isArray(obj) && isTypedArray(obj, "float")) return "float[]"
-    if (isArray(obj) && isTypedArray(obj, "object")) return "object[]"
-    if (isArray(obj) && isTypedOfArray(obj, "number")) return "number[]"
-    if (isArray(obj) && isTypedArray(obj, "enum")) return "enum[]"
-    if (isArray(obj) && isTypedArray(obj, "struct")) return "struct[]"
-    if (isArray(obj) && isTypedArray(obj, "array")) return "array[]"
-
-    if (isArray(obj)) return "array"
+    if (typeof obj === "function" && obj.__component__ === true) return "component"
+    if (Array.isArray(obj)) return arrayType(obj)
 
     if (obj instanceof Map) return "map"
     if (obj instanceof Set) return "set"
@@ -277,20 +252,12 @@ export function __type_label__(specification) {
     return refs.map(referenceLabel).join(" | ")
 }
 
-function resolveTypeReference(reference) {
-    if (reference && typeof reference === "object" && reference.__slim_type_ref__) {
-        if (typeof reference.resolve === "function") return reference.resolve()
+function lookupType(name) {
+    return __custom_types__[name] ?? __structs__[name] ?? __enums__[name]
+}
 
-        const name = reference.label.replace(/(?:\[\])+$/, "").split("::")[0]
-        return __custom_types__[name] ?? __structs__[name] ?? __enums__[name]
-    }
-
-    if (typeof reference === "string") {
-        const name = reference.replace(/(?:\[\])+$/, "").split("::")[0]
-        return __custom_types__[name] ?? __structs__[name] ?? __enums__[name]
-    }
-
-    return reference
+function resolveReference(reference) {
+    return typeof reference?.resolve === "function" ? reference.resolve() : undefined
 }
 
 function isClass(value) {
@@ -308,111 +275,70 @@ function matchesDefinition(definition, value) {
     return isSameType(definition, value)
 }
 
-function matchesResolvedType(resolved, label, value) {
+function matchesResolvedType(resolved, value, typeArgs = null) {
     if (resolved === undefined || resolved === null) return false
-
-    if (resolved?.type === Struct) {
-        return __typed__(value, resolved, "errorResult").success
-    }
-
-    if (resolved?.type instanceof Enum) return resolved.has(value)
+    if (resolved.type === Struct) return __typed__(value, resolved, "errorResult", typeArgs).success
+    if (resolved.type instanceof Enum) return resolved.has(value)
     if (resolved instanceof EnumValue) return resolved === value
-
-    if (typeof resolved === "function" && resolved.__type__ === true) {
-        return resolved(value) === true
-    }
-
+    if (typeof resolved === "function" && resolved.__type__ === true) return resolved(value) === true
     return matchesDefinition(resolved, value)
 }
 
 const BUILTIN_CLASSES = { Map, Set, Date, Promise, RegExp, Error }
 
-// Split tuple and generic members only at top-level commas.
-function splitTypeList(text) {
-    const parts = []
-    let depth = 0
-    let current = ""
-
-    for (const char of text) {
-        if (char === "<" || char === "[" || char === "(") depth++
-        else if (char === ">" || char === "]" || char === ")") depth--
-        else if (char === "," && depth === 0) { parts.push(current.trim()); current = ""; continue }
-        current += char
-    }
-    if (current.trim()) parts.push(current.trim())
-    return parts
+function matchesNamed(name, resolved, value) {
+    if (resolved !== undefined) return matchesResolvedType(resolved, value)
+    if (name === "number" || name === "float") return typeof value === "number" && !Number.isNaN(value)
+    if (name === "array") return Array.isArray(value)
+    if (name in BUILTIN_CLASSES) return value instanceof BUILTIN_CLASSES[name]
+    return type(value) === name
 }
 
-function matchesLabel(label, value) {
-    return __type_matches__(__type_spec__(__type_ref__(label)), value)
-}
+function matchesNode(node, value, resolved) {
+    switch (node.kind) {
+        case "any":
+            return true
+        case "union":
+            return node.types.some(part => matchesNode(part, value))
+        case "intersection":
+            return node.types.every(part => matchesNode(part, value))
+        case "literal":
+            return value === node.value
+        case "tuple":
+            return Array.isArray(value) && value.length === node.items.length &&
+                node.items.every((part, index) => matchesNode(part, value[index]))
+        case "array":
+            if (!Array.isArray(value)) return false
+            if (node.element.kind === "named" && node.element.name === "null") return value.every(item => item == null)
+            return value.every(item => matchesNode(node.element, item, resolved))
+        case "generic": {
+            const [first = ANY, second = ANY] = node.args
+            if (node.name === "Set") return value instanceof Set && [...value].every(item => matchesNode(first, item))
+            if (node.name === "Map") {
+                return value instanceof Map && [...value].every(([key, entry]) =>
+                    matchesNode(first, key) && matchesNode(second, entry))
+            }
+            if (node.name === "Promise") return value instanceof Promise
 
-function matchesNamedType(label, resolved, value) {
-    if (label === "any") return true
-
-    if (label.length > 2 && label.startsWith("[") && label.endsWith("]")) {
-        if (!Array.isArray(value)) return false
-
-        const parts = splitTypeList(label.slice(1, -1))
-        if (value.length !== parts.length) return false
-        return parts.every((part, index) => matchesLabel(part, value[index]))
-    }
-
-    const generic = label.indexOf("<")
-    if (generic !== -1 && label.endsWith(">")) {
-        const container = label.slice(0, generic).trim()
-        const args = splitTypeList(label.slice(generic + 1, -1))
-        const first = args[0] ?? "any"
-
-        if (container === "Array") {
-            return Array.isArray(value) && value.every(item => matchesLabel(first, item))
+            const definition = resolved ?? lookupType(node.name)
+            if (definition?.type === Struct) return matchesResolvedType(definition, value, node.args)
+            return matchesNamed(node.name, definition, value)
         }
-        if (container === "Set") {
-            return value instanceof Set && [...value].every(item => matchesLabel(first, item))
+        case "function":
+            return typeof value === "function"
+        case "enumMember": {
+            const definition = resolved ?? __enums__[node.name]
+            return !!definition && definition[node.member] === value
         }
-        if (container === "Map") {
-            const second = args[1] ?? "any"
-            return value instanceof Map && [...value].every(([key, entry]) =>
-                matchesLabel(first, key) && matchesLabel(second, entry))
-        }
-        if (container === "Promise") return value instanceof Promise
-
-        return matchesNamedType(container, resolved, value)
+        default:
+            return matchesNamed(node.name, resolved ?? lookupType(node.name), value)
     }
-
-    if (label.endsWith("[]")) {
-        if (!Array.isArray(value)) return false
-
-        const elementLabel = label.slice(0, -2)
-        if (value.length === 0) return type(value) === label || elementLabel === "any"
-
-        if (resolved !== undefined) {
-            return value.every(item => matchesResolvedType(resolved, elementLabel, item))
-        }
-
-        return type(value) === label
-    }
-
-    const enumSeparator = label.indexOf("::")
-    if (enumSeparator !== -1) {
-        const enumName = label.slice(0, enumSeparator)
-        const member = label.slice(enumSeparator + 2)
-        const enumDef = resolved ?? __enums__[enumName]
-        return !!enumDef && enumDef[member] === value
-    }
-
-    if (resolved !== undefined) return matchesResolvedType(resolved, label, value)
-    if (label === "number") return type(value) === "int" || type(value) === "float"
-
-    if (label in BUILTIN_CLASSES) return value instanceof BUILTIN_CLASSES[label]
-
-    return type(value) === label
 }
 
 function matchesReference(reference, value) {
     const label = typeof reference === "string" ? reference : reference?.label
     if (!label) return false
-    return matchesNamedType(label, resolveTypeReference(reference), value)
+    return matchesNode(readType(label), value, resolveReference(reference))
 }
 
 export function __type_matches__(specification, value) {
@@ -421,6 +347,14 @@ export function __type_matches__(specification, value) {
     }
     const references = Array.isArray(specification) ? specification : [specification]
     return references.some(reference => matchesReference(reference, value))
+}
+
+function substituteTypeParams(label, params, args) {
+    const bound = new Map(params.map((param, index) => {
+        const arg = args?.[index] ?? ANY
+        return [param, typeof arg === "string" ? readType(arg) : arg]
+    }))
+    return substituteType(readType(label), bound)
 }
 
 function previewValue(value) {
@@ -476,6 +410,31 @@ function getStaticFieldType(owner, field) {
     return typedStaticFields.get(owner)?.get(field)
 }
 
+const isIndex = property => typeof property === "string" && /^\d+$/.test(property)
+
+function propertyCheck(specification) {
+    if (!Array.isArray(specification) || specification.length !== 1) return null
+
+    const reference = specification[0]
+    const node = readType(referenceLabel(reference))
+    const resolved = resolveReference(reference)
+
+    if (node.kind === "array") {
+        return (target, property) =>
+            !isIndex(property) || !(property in target) || matchesNode(node.element, target[property], resolved)
+    }
+
+    const definition = node.kind === "named" ? resolved ?? lookupType(node.name) : null
+    if (definition?.type !== Struct || definition.typeParams.length > 0) return null
+
+    return (target, property) => {
+        const field = definition.scheme[property]
+        if (!field) return false
+        if (!(property in target)) return field.optional
+        return __type_matches__(field.specification, target[property])
+    }
+}
+
 function guardTypedValue(value, specification, varName) {
     if (!value || typeof value !== "object" || !__type_matches__(specification, value)) return value
     if (__type_label__(specification) === "any") return value
@@ -488,17 +447,24 @@ function guardTypedValue(value, specification, varName) {
         if (descriptor) Reflect.defineProperty(target, property, descriptor)
         else Reflect.deleteProperty(target, property)
     }
+    const quick = propertyCheck(specification)
     const check = (target, property, descriptor) => {
-        if (__type_matches__(specification, target)) return
+        if (quick ? quick(target, property) : __type_matches__(specification, target)) return
         restore(target, property, descriptor)
         typeError(varName, __type_label__(specification), target, "mutated")
     }
     const proxy = new Proxy(value, {
         set(target, property, next) {
             const descriptor = Object.getOwnPropertyDescriptor(target, property)
+            const length = Array.isArray(target) ? target.length : -1
             const succeeded = Reflect.set(target, property, next, target)
             if (!succeeded) return false
-            check(target, property, descriptor)
+            try {
+                check(target, property, descriptor)
+            } catch (error) {
+                if (length !== -1) target.length = length
+                throw error
+            }
             return true
         },
         deleteProperty(target, property) {
@@ -524,13 +490,19 @@ function guardTypedValue(value, specification, varName) {
 }
 
 
-export function __def_struct__(name, schema, specifications = {}, defaults = {}, extendsName = null, methods = {}) {
+export function __def_struct__(
+    name, schema, specifications = {}, defaults = {}, extendsName = null, methods = {},
+    typeParams = null, readonly = null
+) {
+    if (__RESERVED_DEFINES__.has(name)) throw new StructError(`Name "${name}" is reserved`)
+
     const parent = extendsName ? __structs__[extendsName] : null
     if (extendsName && !parent) throw new StructError(`Struct "${name}" extends unknown struct "${extendsName}"`)
 
     const schemeArray = parent ? { ...parent.scheme } : {}
     const mergedDefaults = parent ? { ...parent.__defaults__, ...defaults } : defaults
-    const mergedMethods = parent ? { ...parent.__methods__, ...methods } : methods
+    const mergedMethods = parent ? { ...parent.__methods__, ...(methods ?? {}) } : methods ?? {}
+    const readonlyFields = new Set([...(parent?.readonly ?? []), ...(readonly ?? [])])
 
     Object.keys(schema).forEach(item => {
         let fieldName = item
@@ -551,27 +523,40 @@ export function __def_struct__(name, schema, specifications = {}, defaults = {},
         type: Struct,
         name,
         scheme: schemeArray,
+        typeParams: typeParams ?? [],
+        readonly: [...readonlyFields],
         __defaults__: mergedDefaults,
         __methods__: mergedMethods,
-        verify: object => __typed__(object, definition),
-        verifySafe: object => __typed__(object, definition, "errorResult"),
+        verify: (object, typeArgs = null) => __typed__(object, definition, "default", typeArgs),
+        verifySafe: (object, typeArgs = null) => __typed__(object, definition, "errorResult", typeArgs),
         new: (values = {}) => {
             const filled = {}
             for (const key of Object.keys(mergedDefaults)) {
                 if (!(key in values)) filled[key] = mergedDefaults[key]()
             }
             const data = __typed__({ ...filled, ...values }, definition)
-            return Object.keys(mergedMethods).length ? Object.assign(Object.create(mergedMethods), data) : data
+            for (const [field, { type: label }] of Object.entries(schemeArray)) {
+                if (field in data) data[field] = toStruct(data[field], readType(label))
+            }
+            const instance = Object.keys(mergedMethods).length ? Object.assign(Object.create(mergedMethods), data) : data
+
+            for (const field of readonlyFields) {
+                if (field in instance) {
+                    Object.defineProperty(instance, field, { value: instance[field], enumerable: true, writable: false, configurable: false })
+                }
+            }
+            return instance
         }
     }
 
     __structs__[name] = definition
-    if (__RESERVED_DEFINES__.has(name)) throw new StructError(`Name "${name}" is reserved`)
     globalThis[name] = definition
     return definition
 }
 
 export function __def_enum__(name, schema) {
+    if (__RESERVED_DEFINES__.has(name)) throw new EnumError(`Name "${name}" is reserved`)
+
     const values = { ...schema }
     const definition = {
         type: new Enum(name),
@@ -581,7 +566,13 @@ export function __def_enum__(name, schema) {
         keys: () => Object.keys(values),
         has: value => Object.values(values).some(item =>
             value === item || (value instanceof EnumValue && value.value === item)
-        )
+        ),
+        from: value => {
+            const raw = value instanceof EnumValue ? value.value : value
+            const key = Object.keys(values).find(key => values[key] === raw)
+            if (key === undefined) throw new EnumError(`${previewValue(value)} is not a value of enum "${name}"`)
+            return definition[key]
+        }
     }
 
     Object.keys(values).forEach(key => {
@@ -589,7 +580,6 @@ export function __def_enum__(name, schema) {
     })
 
     __enums__[name] = definition
-    if (__RESERVED_DEFINES__.has(name)) throw new EnumError(`Name "${name}" is reserved`)
     globalThis[name] = definition
     return definition
 }
@@ -605,6 +595,36 @@ export function __typed_variable__(value, specification, bindingId, varName = bi
         name: varName
     })
     return guardTypedValue(value, specification, varName)
+}
+
+const isPlainObject = value =>
+    value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+
+function structNamed(type) {
+    if (type.kind === "union") {
+        const found = type.types.map(structNamed).filter(Boolean)
+        return found.length === 1 ? found[0] : null
+    }
+    if (type.kind !== "named" && type.kind !== "generic") return null
+    const definition = lookupType(type.name)
+    return definition?.type === Struct ? definition : null
+}
+
+function toStruct(value, type) {
+    if (Array.isArray(value) && type.kind === "array" && structNamed(type.element)) {
+        return value.map(item => toStruct(item, type.element))
+    }
+    if (!isPlainObject(value)) return value
+    const definition = structNamed(type)
+    return definition ? definition.new(value) : value
+}
+
+export function __match_type__(value, label) {
+    return matchesNode(readType(label), value)
+}
+
+export function __as_struct__(value, label) {
+    return toStruct(value, readType(label))
 }
 
 export function __typed_return__(value, specification, fnName) {
@@ -702,7 +722,7 @@ __type_def__("negative", value => typeof value === "number" && value < 0)
 __type_def__("natural", value => Number.isInteger(value) && value >= 0)
 __type_def__("nonempty", value => (typeof value === "string" || Array.isArray(value)) && value.length > 0)
 
-export function __typed__(value, structName, returnMethod = "default") {
+export function __typed__(value, structName, returnMethod = "default", typeArgs = null) {
     const name = typeof structName === "string" ? structName : structName?.name
     const structDef = typeof structName === "string" ? __structs__[structName] : structName
     if (!structDef) throw new StructError(`Unknown struct "${structName}"`)
@@ -736,14 +756,23 @@ export function __typed__(value, structName, returnMethod = "default") {
             continue
         }
 
-        if (!__type_matches__(definition.specification, value[field])) {
+        const params = structDef.typeParams ?? []
+        const expected = params.length
+            ? substituteTypeParams(__type_label__(definition.specification), params, typeArgs)
+            : null
+        const fits = expected === null
+            ? __type_matches__(definition.specification, value[field])
+            : matchesNode(expected, value[field])
+
+        if (!fits) {
+            const label = expected ? formatType(expected) : __type_label__(definition.specification)
             return fail(new StructError(
-                `"${name}.${field}" expected ${__type_label__(definition.specification)}, got ${type(value[field])}: ${previewValue(value[field])}`
+                `"${name}.${field}" expected ${label}, got ${type(value[field])}: ${previewValue(value[field])}`
             ), {
-            	name: name,
-             	field: field,
-              	expected: __type_label__(definition.specification),
-               	got: type(value[field]),
+                name,
+                field,
+                expected: label,
+                got: type(value[field]),
                 fieldName: `${name}.${field}`
             })
         }
@@ -765,26 +794,13 @@ export function __sizeof__(value) {
 }
 
 export function __is_empty__(obj) {
-    if (__sizeof__(obj) == 0) {
-        return true
-    }
-    else {
-        return false
-    }
+    return __sizeof__(obj) === 0
 }
 
 export function __copyof__(obj) {
-    if (Type.isObj(obj)) {
-        return { ...obj }
-    }
-    else if (Type.isAnyArray(obj)) {
-        const arrCopy = []
-        obj.forEach(item => arrCopy.push(item))
-        return arrCopy
-    }
-    else {
-        throw TypeError(`Copy target must be object or array, not ${type(obj)}`)
-    }
+    if (Array.isArray(obj)) return [...obj]
+    if (Type.isObj(obj)) return { ...obj }
+    throw new TypeError(`Copy target must be object or array, not ${type(obj)}`)
 }
 
 export function __intdiv__(a, b) {
@@ -820,42 +836,144 @@ export function __lock_object__(obj) {
     }
 
     const wrapped = new Proxy(obj, handler)
-
     IMMUTABLE.set(obj, wrapped)
 
-    const keys = Reflect.ownKeys(obj)
+    for (const key of Reflect.ownKeys(obj)) {
+        const descriptor = Object.getOwnPropertyDescriptor(obj, key)
+        const value = descriptor.value
+        if (!value || typeof value !== "object") continue
 
-    for (const key of keys) {
-        const value = obj[key]
-
-        if (value && typeof value === "object") {
-            obj[key] = __lock_object__(value)
-        }
+        const locked = __lock_object__(value)
+        if (descriptor.writable) obj[key] = locked
     }
 
-    Object.freeze(obj)
+    if (!ArrayBuffer.isView(obj)) Object.freeze(obj)
 
     return wrapped
+}
+
+
+const FORM_NAMES = new Set(["errors", "valid", "values", "submit", "reset", "submitting", "touched"])
+const isBlank = value => value === undefined || value === null || value === ""
+
+function emptyValue(label) {
+    if (label === "bool") return false
+    return ""
+}
+
+export function createForm(definition, { initial = {}, messages = {} } = {}) {
+    if (!definition?.scheme) throw new TypeError("createForm takes a struct: createForm(Signup)")
+    const scheme = definition.scheme
+    const fields = Object.keys(scheme)
+    for (const field of fields) {
+        if (FORM_NAMES.has(field)) throw new TypeError(`createForm: the field "${field}" of "${definition.name}" has the name of a form property, rename it`)
+    }
+
+    const startValue = field => field in initial ? initial[field]
+        : field in definition.__defaults__ ? definition.__defaults__[field]()
+        : emptyValue(scheme[field].type)
+    const values = Object.fromEntries(fields.map(field => [field, new Signal(startValue(field))]))
+    const touched = Object.fromEntries(fields.map(field => [field, new Signal(false)]))
+    const submitted = new Signal(false)
+    const submitting = new Signal(false)
+
+    const coerce = (field, value) => {
+        const { specification } = scheme[field]
+        if (typeof value !== "string" || value.trim() === "" || __type_matches__(specification, value)) return value
+        const number = Number(value)
+        return !Number.isNaN(number) && __type_matches__(specification, number) ? number : value
+    }
+
+    const problems = Object.fromEntries(fields.map(field => [field, __computed__(() => {
+        const { specification, optional } = scheme[field]
+        const value = values[field].v
+        if (isBlank(value)) return optional ? null : messages[field] ?? "required"
+        if (__type_matches__(specification, value)) return null
+        return messages[field] ?? `expected ${__type_label__(specification)}`
+    })]))
+
+    const errors = {}
+    for (const field of fields) {
+        Object.defineProperty(errors, field, {
+            enumerable: true,
+            get: () => touched[field].v || submitted.v ? problems[field].v : null
+        })
+    }
+
+    const valid = __computed__(() => fields.every(field => problems[field].v === null))
+    const snapshot = () => {
+        const data = {}
+        for (const field of fields) {
+            const value = values[field].peek()
+            if (!(isBlank(value) && scheme[field].optional)) data[field] = value
+        }
+        return data
+    }
+
+    const form = {
+        errors,
+        get valid() { return valid.v },
+        get values() { return snapshot() },
+        get submitting() { return submitting.v },
+        touched: field => touched[field]?.v ?? false,
+        submit(handler) {
+            return event => {
+                event?.preventDefault?.()
+                submitted.v = true
+                if (!valid.peek()) return
+                const result = handler(definition.new(snapshot()))
+                if (result && typeof result.then === "function") {
+                    submitting.v = true
+                    return result.finally(() => { submitting.v = false })
+                }
+                return result
+            }
+        },
+        reset(next = {}) {
+            batch(() => {
+                for (const field of fields) {
+                    values[field].v = field in next ? next[field] : startValue(field)
+                    touched[field].v = false
+                }
+                submitted.v = false
+            })
+        }
+    }
+    for (const field of fields) {
+        Object.defineProperty(form, field, {
+            enumerable: true,
+            get: () => values[field].v,
+            set: value => batch(() => {
+                values[field].v = coerce(field, value)
+                touched[field].v = true
+            })
+        })
+    }
+    return form
 }
 
 Object.assign(globalThis, {
     log, warn, error, info, debug,
 
+    createForm,
+
     type,
 
     Component, Type, Struct,
 
-    onError, test, assert, assertEqual,
+    onError, test, describe, assert, assertEqual,
 
     __def_struct__, __def_enum__, __typed__, __handle_async_error__,
     __handle_sync_error__, __sizeof__, __is_empty__, __lock_object__,
-    __typed_variable__, __typed_variable_check__, __typed_pattern__, __typed_return__,
-    __intdiv__, __copyof__, __match_eq__,
+    __typed_variable__, __typed_variable_check__, __typed_pattern__, __typed_return__, __as_struct__,
+    __intdiv__, __copyof__, __match_eq__, __match_type__,
     __typed_parameter__, __typed_static_field__, __typed_static_field_check__,
     __type_def__, __argument_typed__,
     __type_ref__, __type_spec__, __type_spec_all__, __type_matches__, __type_label__,
 
     StructError, StructPassedError, StructExpectError, ArgumentDeclarationTypeError,
 
-    PI
+    PI,
+
+    ...REACTIVE_GLOBALS
 })

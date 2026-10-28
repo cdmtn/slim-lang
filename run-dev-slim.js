@@ -4,7 +4,6 @@ import { fileURLToPath } from "url";
 import chokidar from "chokidar";
 import { spawn } from "child_process";
 
-// This script ships in the package; the compiler sits next to it there.
 const packageRoot = path.dirname(fileURLToPath(import.meta.url));
 const compileScript = path.join(packageRoot, "src", "compile.js");
 
@@ -22,7 +21,7 @@ let rebuilding = false;
 let pending = false;
 
 function run() {
-    app = spawn("node", ["--enable-source-maps", "--no-warnings", entry], {
+    app = spawn(process.execPath, ["--enable-source-maps", "--no-warnings", entry], {
         stdio: "inherit",
         detached: process.platform !== "win32",
         env: {
@@ -76,7 +75,7 @@ function stop() {
 
 function compile() {
     return new Promise(resolve => {
-        const compiler = spawn("node", [compileScript], {
+        const compiler = spawn(process.execPath, [compileScript], {
             stdio: "inherit"
         });
 
@@ -116,7 +115,13 @@ async function rebuild() {
 await rebuild();
 
 const watchTarget = config.watch ?? ".";
-const ignoreDirs = new RegExp(`(^|[\\\\/])(node_modules|${distDir}|\\.git)([\\\\/]|$)`);
+const distPath = path.resolve(distDir);
+
+function isIgnored(file) {
+    const abs = path.resolve(file);
+    if (abs === distPath || abs.startsWith(distPath + path.sep)) return true;
+    return file.split(/[\\/]/).some(part => part === "node_modules" || part === ".git");
+}
 
 const watcher = chokidar.watch(watchTarget, {
     ignoreInitial: true,
@@ -124,7 +129,7 @@ const watcher = chokidar.watch(watchTarget, {
         stabilityThreshold: 150,
         pollInterval: 50
     },
-    ignored: p => ignoreDirs.test(p)
+    ignored: isIgnored
 });
 
 watcher.on("all", (_, file) => {
