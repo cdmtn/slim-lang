@@ -251,6 +251,13 @@ function main() {
         const entry = data.main.endsWith(".slim") ? data.main : `${data.main}.slim`
         setOutputPath(entry, path.resolve(distDirName(), `${data.main}.js`))
         compileFile(entry)
+
+        const clients = Array.isArray(data.clients) ? data.clients : []
+        for (const client of clients) {
+            if (typeof client !== "string" || !client.trim()) continue
+            compileFile(client.endsWith(".slim") ? client : `${client}.slim`)
+        }
+
         cleanDist()
         saveCache()
         if (reused > 0) debug(`Up to date: ${reused} of ${compiled.size} files`)

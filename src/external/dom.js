@@ -1,7 +1,7 @@
 import { SafeHtml, VNode, htmlToVdom, slimDocument, parseAttributeList } from "./helpers.js"
 import {
     Owner, Signal, __render_effect__, __computed__, __component__, batch, runWithOwner, untrack, onCleanup, changedInPlace,
-    setServerRendering, setRootHook, setServerData, setHydrationData
+    setServerRendering, setRootHook, setServerData, setHydrationData, setServerStore, setClientStore
 } from "./reactive.js"
 
 const SVG_NS = "http://www.w3.org/2000/svg"
@@ -623,24 +623,36 @@ export function renderToString(render) {
 
 export async function renderToStringAsync(render, { passes = 5 } = {}) {
     const data = { results: [], pending: [], index: 0 }
-    for (let pass = 1; ; pass++) {
-        data.index = 0
-        data.pending = []
-        setServerData(data)
-        let html
-        try {
-            html = renderToString(render)
-        } finally {
-            setServerData(null)
+    const store = {}
+    setServerStore(store)
+    try {
+        for (let pass = 1; ; pass++) {
+            data.index = 0
+            data.pending = []
+            setServerData(data)
+            let html
+            try {
+                html = renderToString(render)
+            } finally {
+                setServerData(null)
+            }
+            if (data.pending.length === 0 || pass === passes) {
+                const sent = data.results.map(result => result && (result.error !== undefined
+                    ? { error: String(result.error?.message ?? result.error) }
+                    : { value: result.value }))
+                const json = JSON.stringify(sent).replace(/</g, "\\u003c")
+                const storeJson = JSON.stringify(store).replace(/</g, "\\u003c")
+                return {
+                    html,
+                    data: sent,
+                    store,
+                    script: `<script>window.__slimData = ${json};window.__slimStore = ${storeJson}</script>`
+                }
+            }
+            await Promise.all(data.pending)
         }
-        if (data.pending.length === 0 || pass === passes) {
-            const sent = data.results.map(result => result && (result.error !== undefined
-                ? { error: String(result.error?.message ?? result.error) }
-                : { value: result.value }))
-            const json = JSON.stringify(sent).replace(/</g, "\\u003c")
-            return { html, data: sent, script: `<script>window.__slimData = ${json}</script>` }
-        }
-        await Promise.all(data.pending)
+    } finally {
+        setServerStore(null)
     }
 }
 
@@ -648,6 +660,9 @@ export function hydrate(render, container, data = globalThis.__slimData) {
     const previous = cursor
     cursor = { nodes: [...container.childNodes], index: 0 }
     setHydrationData(Array.isArray(data) ? { values: data, index: 0 } : null)
+    if (globalThis.__slimStore && typeof globalThis.__slimStore === "object") {
+        setClientStore(globalThis.__slimStore)
+    }
     try {
         return render()
     } finally {

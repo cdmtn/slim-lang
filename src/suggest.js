@@ -42,7 +42,7 @@ export const KNOWN_GLOBALS = new Set([
     "log", "warn", "error", "info", "debug", "type", "Component", "Type", "Struct", "onError",
     "test", "describe", "assert", "assertEqual", "PI", "raw", "escapeHtml", "htmlToVdom",
     "StructError", "StructPassedError", "StructExpectError", "ArgumentDeclarationTypeError",
-    "onMount", "onConnect", "onUnmount", "effect", "watch", "untrack", "batch", "onCleanup", "resource", "renderToString", "renderToStringAsync", "hydrate", "createContext", "provide", "inject", "catchError", "createForm", "Router", "Link", "Portal", "navigate", "route", "matchRoute",
+    "onMount", "onConnect", "onUnmount", "effect", "watch", "untrack", "batch", "onCleanup", "resource", "provideData", "renderToString", "renderToStringAsync", "hydrate", "createContext", "provide", "inject", "catchError", "createForm", "Router", "Link", "Portal", "navigate", "route", "matchRoute",
     "window", "document", "navigator", "location", "history", "screen", "localStorage", "sessionStorage",
     "indexedDB", "alert", "confirm", "prompt", "event", "self", "top", "parent", "frames", "customElements",
     "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",

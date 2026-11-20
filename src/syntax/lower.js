@@ -567,6 +567,7 @@ function buildComponent(node, lowering) {
                 return new Function(${JSON.stringify(bindingCode)}, ${JSON.stringify(bodyCode)})(__props__);
             };
             ${name}.__component__ = true;
+            ${name}.__module__ = import.meta.url;
             return ${name};
         })()`)
         return fill(statement, { __SLIM_GUARD__: guard }).expression
@@ -579,6 +580,7 @@ function buildComponent(node, lowering) {
         const [statement] = parseTemplate(`(() => {
             const ${name} = (__props__ = {}) => ${name}.__render__(__props__);
             ${name}.__component__ = true;
+            ${name}.__module__ = import.meta.url;
             ${name}.tag = ${tag};
             ${name}.__render__ = (__SLIM_PARAM__ = {}, __host__ = null) => __component__(() => {
                 const s = {};
@@ -617,6 +619,7 @@ function buildComponent(node, lowering) {
             return __el__;
         });
         ${name}.__component__ = true;
+        ${name}.__module__ = import.meta.url;
         return ${name};
     })()`)
 

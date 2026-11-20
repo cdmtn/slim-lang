@@ -19,6 +19,8 @@ export function setServerRendering(on) {
 
 let serverData = null
 let hydrationData = null
+let serverStore = null
+let clientStore = null
 
 export function setServerData(data) {
     serverData = data
@@ -26,6 +28,24 @@ export function setServerData(data) {
 
 export function setHydrationData(data) {
     hydrationData = data
+}
+
+export function setServerStore(store) {
+    serverStore = store
+}
+
+export function setClientStore(store) {
+    clientStore = store
+}
+
+export function provideData(key, compute) {
+    if (clientStore && key in clientStore) return clientStore[key]
+    if (serverStore && key in serverStore) return serverStore[key]
+
+    const value = typeof compute === "function" ? compute() : compute
+
+    if (serverStore) serverStore[key] = value
+    return value
 }
 
 export function setRootHook(fn) {
@@ -596,6 +616,6 @@ export function __defaults__(props, defaults) {
 }
 
 export const REACTIVE_GLOBALS = {
-    effect, watch, untrack, batch, onCleanup, resource, createContext, provide, inject, catchError,
+    effect, watch, untrack, batch, onCleanup, resource, provideData, createContext, provide, inject, catchError,
     __signal__, __computed__, __mut__, __mut_deep__, __is__, __render_effect__, __component__, __defaults__, __live__
 }

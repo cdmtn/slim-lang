@@ -1,6 +1,7 @@
 use http from "http"
 use * as fs from "fs"
 use * as nodePath from "path"
+use { fileURLToPath } from "url"
 import process from 'node:process';
 
 export type ServerInstance = typeof Server;
@@ -30,6 +31,10 @@ class Server {
         this.clients = [];
         this.staticDirs = [];
         this.dev = false;
+        this.clientPrefix = "/@slim";
+        this.distDir = null;
+        this.httpServer = null;
+        this.shutdownInstalled = false;
 
         this.#loadConfig();
     }
@@ -37,10 +42,13 @@ class Server {
     #loadConfig() {
         let configDir = process.cwd();
         let raw: object = {};
+        let distName = "slim-dist";
 
         try {
             const slimConf = JSON.parse(fs.readFileSync(nodePath.join(process.cwd(), "slimconfig.json"), "utf8"));
             if (slimConf.main) configDir = nodePath.dirname(nodePath.resolve(slimConf.main));
+            if (slimConf.names && slimConf.names.dist) distName = slimConf.names.dist;
+            else if (slimConf.dist) distName = slimConf.dist;
         } catch (e) {}
 
         try {
@@ -60,6 +68,77 @@ class Server {
         });
 
         this.static(statics);
+
+        this.#mountClient(distName);
+    }
+
+    #mountClient(distName: string) {
+        const distDir = nodePath.resolve(process.cwd(), distName);
+
+        this.distDir = distDir;
+
+        if (fs.existsSync(distDir)) {
+            this.staticDirs.push({ prefix: this.clientPrefix, dir: distDir });
+        }
+    }
+
+    #resolveHydrate(entry: string) {
+        if (entry.startsWith("/") || entry.startsWith("http")) return entry;
+
+        const modulePath = entry.endsWith(".js") ? entry : `${entry}.js`;
+        return `${this.clientPrefix}/${modulePath}`;
+    }
+
+    #hydrateBootstrap(hydrate) {
+        // Component reference → derive its module + export name automatically.
+        // Every compiled component carries `__module__` (its own import.meta.url).
+        if (typeof hydrate === "function") {
+            const name = hydrate.name;
+            const moduleUrl = this.#clientUrlFor(hydrate.__module__);
+
+            if (empty name || empty moduleUrl) {
+                throw new Error("hydrate: component must be a named export compiled by Slim");
+            }
+
+            return this.#inlineBootstrap(moduleUrl, name);
+        }
+
+        // Absolute/external entry → load it as a module (custom bootstrap escape hatch).
+        if (hydrate.startsWith("/") || hydrate.startsWith("http")) {
+            return `<script type="module" src="${hydrate}"></script>`;
+        }
+
+        // "module/path:Export" → generate the client bootstrap inline. The component is
+        // already compiled (the server imports it), so no client entry file is needed.
+        if (hydrate.includes(":")) {
+            const parts = hydrate.split(":");
+            return this.#inlineBootstrap(`${this.clientPrefix}/${parts[0]}.js`, parts[1]);
+        }
+
+        // Bare module path → a hand-written client entry compiled to <path>.js.
+        return `<script type="module" src="${this.#resolveHydrate(hydrate)}"></script>`;
+    }
+
+    // Map a compiled module's import.meta.url to its served /@slim/... URL.
+    #clientUrlFor(moduleUrl: string) {
+        if (empty moduleUrl || empty this.distDir) return null;
+
+        const filePath = moduleUrl.startsWith("file:") ? fileURLToPath(moduleUrl) : moduleUrl;
+        const rel = nodePath.relative(this.distDir, filePath).split(nodePath.sep).join("/");
+
+        if (empty rel || rel.startsWith("..")) return null;
+
+        return `${this.clientPrefix}/${rel}`;
+    }
+
+    #inlineBootstrap(moduleUrl: string, name: string) {
+        const coreUrl = `${this.clientPrefix}/external/core.js`;
+
+        return `<script type="module">` +
+            `import "${coreUrl}";` +
+            `import { ${name} } from "${moduleUrl}";` +
+            `hydrate(() => ${name}(), document.getElementById("slim-root"));` +
+            `</script>`;
     }
 
 	page(path: string, render: function, options?: object) {
@@ -146,9 +225,10 @@ class Server {
                 const props = { dev: isDev, params, url: req.url }
                 const rendered = await renderToStringAsync(() => render(props))
                 const data = JSON.stringify(props).replace(/</g, "\\u003c")
+                const bootstrap = this.#hydrateBootstrap(options.hydrate)
                 html = `<div id="slim-root">${rendered.html}</div>` + rendered.script +
                     `<script>window.__slimProps = ${data}</script>` +
-                    `<script type="module" src="${options.hydrate}"></script>`
+                    bootstrap
             } else {
                 html = render({ dev: isDev, params, url: req.url })
             }
@@ -338,7 +418,7 @@ class Server {
             });
         });
 
-        http.createServer((req, res) => {
+        this.httpServer = http.createServer((req, res) => {
             const url = req.url.split("?")[0];
 
             if (this.dev && url != "/__slim_reload__") {
@@ -425,9 +505,53 @@ class Server {
 
             res.writeHead(404);
             res.end("404");
-        }).listen(this.port);
+        });
 
-        log(`http://localhost:${this.port}`);
+        this.httpServer.on("error", (err) => {
+            if (err && err.code == "EADDRINUSE") {
+                error(`Port ${this.port} is already in use — another server (or a previous run) is still holding it.`);
+                process.exit(1);
+            }
+            throw err;
+        });
+
+        this.httpServer.listen(this.port, () => {
+            log(`http://localhost:${this.port}`);
+        });
+
+        this.#installShutdown();
+    }
+
+    // Close the HTTP server and release its port. Safe to call more than once.
+    stop() {
+        for (const res of this.clients) {
+            try { res.end(); } catch (e) {}
+        }
+        this.clients = [];
+
+        if (this.httpServer) {
+            // Drop keep-alive connections (e.g. the dev reload stream) so the
+            // socket is freed immediately instead of lingering.
+            if (typeof this.httpServer.closeAllConnections == "function") {
+                this.httpServer.closeAllConnections();
+            }
+            this.httpServer.close();
+            this.httpServer = null;
+        }
+    }
+
+    // Stop cleanly on Ctrl+C / termination signals so the port is freed on exit.
+    #installShutdown() {
+        if (this.shutdownInstalled) return;
+        this.shutdownInstalled = true;
+
+        const shutdown = () => {
+            this.stop();
+            process.exit(0);
+        };
+
+        process.on("SIGINT", shutdown);
+        process.on("SIGTERM", shutdown);
     }
 }
 
