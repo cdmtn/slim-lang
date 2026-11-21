@@ -621,9 +621,9 @@ export function renderToString(render) {
     }
 }
 
-export async function renderToStringAsync(render, { passes = 5 } = {}) {
+export async function renderToStringAsync(render, { passes = 5, store: initialStore } = {}) {
     const data = { results: [], pending: [], index: 0 }
-    const store = {}
+    const store = initialStore && typeof initialStore === "object" ? initialStore : {}
     setServerStore(store)
     try {
         for (let pass = 1; ; pass++) {

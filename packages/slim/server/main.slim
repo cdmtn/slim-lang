@@ -223,7 +223,11 @@ class Server {
 
             if (options && "hydrate" in options) {
                 const props = { dev: isDev, params, url: req.url }
-                const rendered = await renderToStringAsync(() => render(props))
+                let initialStore = null
+                if ("load" in options && typeof options.load == "function") {
+                    initialStore = await options.load(props)
+                }
+                const rendered = await renderToStringAsync(() => render(props), { store: initialStore })
                 const data = JSON.stringify(props).replace(/</g, "\\u003c")
                 const bootstrap = this.#hydrateBootstrap(options.hydrate)
                 html = `<div id="slim-root">${rendered.html}</div>` + rendered.script +
