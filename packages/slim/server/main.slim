@@ -90,8 +90,6 @@ class Server {
     }
 
     #hydrateBootstrap(hydrate) {
-        // Component reference → derive its module + export name automatically.
-        // Every compiled component carries `__module__` (its own import.meta.url).
         if (typeof hydrate === "function") {
             const name = hydrate.name;
             const moduleUrl = this.#clientUrlFor(hydrate.__module__);
@@ -103,20 +101,36 @@ class Server {
             return this.#inlineBootstrap(moduleUrl, name);
         }
 
-        // Absolute/external entry → load it as a module (custom bootstrap escape hatch).
         if (hydrate.startsWith("/") || hydrate.startsWith("http")) {
             return `<script type="module" src="${hydrate}"></script>`;
         }
 
-        // "module/path:Export" → generate the client bootstrap inline. The component is
-        // already compiled (the server imports it), so no client entry file is needed.
         if (hydrate.includes(":")) {
             const parts = hydrate.split(":");
             return this.#inlineBootstrap(`${this.clientPrefix}/${parts[0]}.js`, parts[1]);
         }
 
-        // Bare module path → a hand-written client entry compiled to <path>.js.
         return `<script type="module" src="${this.#resolveHydrate(hydrate)}"></script>`;
+    }
+
+    async #runLoaders(load, props) {
+        const loaders = Array.isArray(load) ? load : [load];
+        const results = await Promise.all(loaders.map(fn => typeof fn == "function" ? fn(props) : fn));
+        const store = {};
+
+        results.forEach((result, i) => {
+            if (result == null) return;
+
+            if (typeof result != "object" || Array.isArray(result)) {
+                const label = loaders[i] && loaders[i].name ? loaders[i].name : `load[${i}]`;
+                warn(`${label} must return a plain object of store keys (JSON data), got ${typeof result} — ignored.`);
+                return;
+            }
+
+            Object.assign(store, result);
+        });
+
+        return store;
     }
 
     // Map a compiled module's import.meta.url to its served /@slim/... URL.
@@ -224,8 +238,8 @@ class Server {
             if (options && "hydrate" in options) {
                 const props = { dev: isDev, params, url: req.url }
                 let initialStore = null
-                if ("load" in options && typeof options.load == "function") {
-                    initialStore = await options.load(props)
+                if ("load" in options) {
+                    initialStore = await this.#runLoaders(options.load, props)
                 }
                 const rendered = await renderToStringAsync(() => render(props), { store: initialStore })
                 const data = JSON.stringify(props).replace(/</g, "\\u003c")
@@ -526,7 +540,6 @@ class Server {
         this.#installShutdown();
     }
 
-    // Close the HTTP server and release its port. Safe to call more than once.
     stop() {
         for (const res of this.clients) {
             try { res.end(); } catch (e) {}
@@ -534,8 +547,6 @@ class Server {
         this.clients = [];
 
         if (this.httpServer) {
-            // Drop keep-alive connections (e.g. the dev reload stream) so the
-            // socket is freed immediately instead of lingering.
             if (typeof this.httpServer.closeAllConnections == "function") {
                 this.httpServer.closeAllConnections();
             }
@@ -544,7 +555,6 @@ class Server {
         }
     }
 
-    // Stop cleanly on Ctrl+C / termination signals so the port is freed on exit.
     #installShutdown() {
         if (this.shutdownInstalled) return;
         this.shutdownInstalled = true;
