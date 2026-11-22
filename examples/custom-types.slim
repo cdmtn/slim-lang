@@ -5,8 +5,6 @@ type number(v) {
 let n: number = 1    // ok
 let n2: number = 1.5 // ok
 
-// Custom validators shadow built-ins and are checked only at runtime.
-
 const payload = JSON.parse(`{ "amount": "" }`)
 
 try {

@@ -6,9 +6,10 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
 import { preprocess } from "../src/syntax/index.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__element_tests__")
+const outputDir = outputFolder("__element_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function runSlim(name, source) {

@@ -1,0 +1,123 @@
+use { Router as RouterView, Link as LinkView, navigate as go, route as current, matchRoute as matchPath, onShow as whenShown, onHide as whenHidden, onLeave as whenLeaving, title as nameThePage, forget as dropPage, onVisit as whenVisited, head as setHead, navigating as isNavigating } from "../external/router.js"
+
+export trait RouteMatch {
+    path: string
+    query: Record<string, string>
+    params: Record<string, string>
+    base?: string
+    hash?: string
+    pattern?: string | null
+    state?: any
+    data?: any
+    error?: any
+}
+
+export trait PageProps {
+    params: Record<string, string>
+    query: Record<string, string>
+    path: string
+    hash: string
+    data?: any
+    error?: any
+}
+
+export trait LoadArgs {
+    params: Record<string, string>
+    query: Record<string, string>
+    path: string
+    state: any
+    signal?: AbortSignal
+}
+
+export trait RouteConfig {
+    page: any
+    load?: (args: LoadArgs) => any
+}
+
+export trait HeadValues {
+    title?: string
+    description?: string
+    meta?: Record<string, string>
+    link?: Record<string, string>
+}
+
+export trait RouterProps {
+    routes: Record<string, any>
+    base?: string
+    url?: string
+    query?: string
+    intercept?: bool
+    ignore?: string
+    keep?: bool | string | string[]
+    max?: int
+    fallback?: any
+    guard?: (match: RouteMatch) => bool | string
+    keepBy?: (match: RouteMatch) => string
+}
+
+export trait LinkProps {
+    href: string
+    active?: string
+    prefix?: bool
+    match?: string | string[]
+    replace?: bool
+    target?: string
+    class?: string
+    children?: any
+}
+
+export trait NavigateOptions {
+    replace?: bool
+    reload?: bool
+    silent?: bool
+    scroll?: bool
+    force?: bool
+    state?: any
+}
+
+export const Router: (props: RouterProps) => any = RouterView
+export const Link: (props: LinkProps) => any = LinkView
+
+export func navigate(to: string, options: NavigateOptions = {}) -> bool {
+    return go(to, options) != false
+}
+
+export func route() -> RouteMatch {
+    return current()
+}
+
+export func matchRoute(pattern: string, path: string) -> Record<string, string>? {
+    return matchPath(pattern, path)
+}
+
+export func onShow(fn: () => void) -> void {
+    whenShown(fn)
+}
+
+export func onHide(fn: () => void) -> void {
+    whenHidden(fn)
+}
+
+export func onLeave(fn: (to: string) => bool | void) -> void {
+    whenLeaving(fn)
+}
+
+export func title(value: string | (() => string)) -> void {
+    nameThePage(value)
+}
+
+export func head(value: HeadValues | (() => HeadValues)) -> void {
+    setHead(value)
+}
+
+export func navigating() -> bool {
+    return isNavigating()
+}
+
+export func onVisit(fn: (match: RouteMatch) => void) -> void {
+    whenVisited(fn)
+}
+
+export func forget(path: string) -> void {
+    dropPage(path)
+}

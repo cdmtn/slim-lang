@@ -1,0 +1,17 @@
+use { Server } from @slim/server
+use { App } from "./app"
+use { projects, findProject } from "./data"
+
+const server = new Server()
+
+server.api("/api/projects", async () => projects)
+
+server.get("/api/projects/{id}", (req, res, params) => {
+    const project = findProject(parseInt(params.id, 10))
+    res.writeHead(project ? 200 : 404, { "Content-Type": "application/json" })
+    res.end(JSON.stringify(project))
+})
+
+server.page("/{...path}", props => App(props), { hydrate: App, title: "Slim SPA", head: ["/public/app.css"] })
+
+server.start()

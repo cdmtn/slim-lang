@@ -7,6 +7,4 @@ node_modules
 local/
 todo.md
 /packages/*
-!/packages/slim/
 spm.lock.json
-bench/bench.js

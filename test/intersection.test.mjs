@@ -5,9 +5,10 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__intersection_tests__")
+const outputDir = outputFolder("__intersection_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function runSlim(name, source) {
@@ -23,7 +24,9 @@ function runSlim(name, source) {
 }
 
 test("an intersection type lowers to the all-combinator", () => {
-    const { code } = transform(`let n: Positive & Even = 4`, "x.slim")
+    const { code } = transform(`type Positive(v) { return v > 0 }
+type Even(v) { return v % 2 == 0 }
+let n: Positive & Even = 4`, "x.slim")
     assert.match(code, /__type_spec_all__/)
 })
 

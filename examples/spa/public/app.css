@@ -1,0 +1,11 @@
+body { font-family: system-ui, sans-serif; margin: 0; background: #f7f7f8; color: #1d1d1f; }
+.app { max-width: 720px; margin: 0 auto; padding: 16px; }
+nav { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+nav a { color: #555; text-decoration: none; }
+nav a.on { color: #0a58ca; font-weight: 600; }
+.tall p { margin: 4px 0; }
+textarea { width: 100%; min-height: 120px; }
+.warning { color: #b42318; }
+.files ul, .projects { padding-left: 20px; }
+.progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: #0a58ca; transition: width .3s; }
+.progress.on { width: 70%; }

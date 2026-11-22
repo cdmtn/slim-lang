@@ -5,9 +5,10 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__match_tests__")
+const outputDir = outputFolder("__match_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function runSlim(name, source) {
@@ -72,7 +73,7 @@ test("guarded cases bind the subject and test a condition", () => {
 test("a .match() method call is not treated as a match expression", () => {
     const result = runSlim("str-match", `
         const m = "hello".match(/l+/)
-        log(m[0])
+        log(m?.[0])
     `)
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /ll/)

@@ -1,50 +1,71 @@
-import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import chokidar from "chokidar";
 import { spawn } from "child_process";
 
 const packageRoot = path.dirname(fileURLToPath(import.meta.url));
-const compileScript = path.join(packageRoot, "src", "compile.js");
+await import(pathToFileURL(path.join(packageRoot, "src", "handlers", "errorHandler.js")).href);
+const { build } = await import(pathToFileURL(path.join(packageRoot, "src", "compile.js")).href);
+const { readJson, distDirName } = await import(pathToFileURL(path.join(packageRoot, "src", "modulePaths.js")).href);
 
-const config = JSON.parse(
-    fs.readFileSync("slimconfig.json", "utf8")
-);
+const config = readJson("slimconfig.json");
 
-const distName = (config.names && config.names.dist) ?? config.dist;
-const distDir = typeof distName === "string" && distName.trim() ? distName : "slim-dist";
-const entry = `${distDir}/${config.main}.js`;
-const hot = process.argv.includes("--hot");
+if (typeof config.main !== "string" || !config.main.trim()) {
+    console.error('slimconfig.json has no "main" entry');
+    process.exit(1);
+}
+
+const slimConfigFile = path.resolve("slimconfig.json");
+let main = config.main;
+
+function serverConfigFile(main) {
+    return path.join(path.dirname(path.resolve(main)), "slimserver.json");
+}
+
+function refreshEntry() {
+    try {
+        const fresh = readJson(slimConfigFile);
+        if (typeof fresh.main === "string" && fresh.main.trim()) main = fresh.main;
+        return fresh;
+    } catch {
+        return config;
+    }
+}
 
 let app = null;
 let rebuilding = false;
 let pending = false;
+const stopped = new WeakSet();
 
 function run() {
-    app = spawn(process.execPath, ["--enable-source-maps", "--no-warnings", entry], {
-        stdio: "inherit",
+    const entry = path.resolve(distDirName(), `${main}.js`);
+    const proc = spawn(process.execPath, ["--enable-source-maps", "--no-warnings", entry], {
+        stdio: ["inherit", "inherit", "inherit", "ipc"],
         detached: process.platform !== "win32",
         env: {
             ...process.env,
-            SLIM_DEV: "1",
-            SLIM_HOT: hot ? "1" : "0"
+            SLIM_DEV: "1"
         }
     });
 
-    app.on("exit", code => {
-        if (code && code !== 0)
+    app = proc;
+
+    proc.on("exit", code => {
+        if (app === proc) app = null;
+        if (code && code !== 0 && !stopped.has(proc))
             console.log(`Application exited with code ${code}`);
     });
 }
 
 function stop() {
     return new Promise(resolve => {
-        if (!app || app.killed) {
+        if (!app || app.killed || app.exitCode !== null || app.signalCode !== null) {
             app = null;
             return resolve();
         }
 
         const proc = app;
+        stopped.add(proc);
 
         proc.once("exit", () => {
             app = null;
@@ -74,15 +95,10 @@ function stop() {
 }
 
 function compile() {
-    return new Promise(resolve => {
-        const compiler = spawn(process.execPath, [compileScript], {
-            stdio: "inherit"
-        });
-
-        compiler.on("exit", code => {
-            resolve(code === 0);
-        });
-    });
+    const started = performance.now();
+    const ok = build();
+    if (ok) console.log(`Compiled in ${Math.round(performance.now() - started)}ms`);
+    return ok;
 }
 
 async function rebuild() {
@@ -96,7 +112,7 @@ async function rebuild() {
     console.clear();
     console.log("Compiling...");
 
-    const ok = await compile();
+    const ok = compile();
 
     if (ok) {
         await stop();
@@ -115,15 +131,16 @@ async function rebuild() {
 await rebuild();
 
 const watchTarget = config.watch ?? ".";
-const distPath = path.resolve(distDir);
-
 function isIgnored(file) {
     const abs = path.resolve(file);
+    const distPath = path.resolve(distDirName());
     if (abs === distPath || abs.startsWith(distPath + path.sep)) return true;
     return file.split(/[\\/]/).some(part => part === "node_modules" || part === ".git");
 }
 
-const watcher = chokidar.watch(watchTarget, {
+let serverConfig = serverConfigFile(config.main);
+
+const watcher = chokidar.watch([watchTarget, slimConfigFile, serverConfig], {
     ignoreInitial: true,
     awaitWriteFinish: {
         stabilityThreshold: 150,
@@ -133,8 +150,24 @@ const watcher = chokidar.watch(watchTarget, {
 });
 
 watcher.on("all", (_, file) => {
-    if (!file || !file.endsWith(".slim")) return;
+    if (!file) return;
+    const abs = path.resolve(file);
+    const isConfig = abs === slimConfigFile || abs === serverConfig;
+    if (file.endsWith(".css")) {
+        console.log(`Changed: ${file}`);
+        if (app?.connected) app.send({ slimCss: path.basename(file) });
+        return;
+    }
+    if (!isConfig && !file.endsWith(".slim")) return;
     console.log(`Changed: ${file}`);
+    if (abs === slimConfigFile) {
+        const fresh = refreshEntry();
+        const nextServerConfig = typeof fresh.main === "string" && fresh.main.trim() ? serverConfigFile(fresh.main) : serverConfig;
+        if (nextServerConfig !== serverConfig) {
+            serverConfig = nextServerConfig;
+            watcher.add(serverConfig);
+        }
+    }
     rebuild();
 });
 

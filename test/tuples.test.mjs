@@ -5,9 +5,10 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__tuple_tests__")
+const outputDir = outputFolder("__tuple_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function runSlim(name, source) {

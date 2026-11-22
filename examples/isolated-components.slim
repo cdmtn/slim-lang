@@ -1,9 +1,9 @@
-func helloWorld() {
-    return "Hello, World!"
-}
-
 isolated component H1() {
+    func helloWorld() {
+        return "Hello, World!"
+    }
+
     return <h1>${helloWorld()}</h1>
 }
 
-log(H1()) // helloWorld is not defined
+log(H1())

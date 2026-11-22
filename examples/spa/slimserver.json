@@ -1,0 +1,4 @@
+{
+    "port": 3100,
+    "statics": [{ "from": "/public", "to": "./public" }]
+}

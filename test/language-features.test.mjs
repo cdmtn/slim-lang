@@ -1,15 +1,17 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__feature_tests__")
+const outputDir = outputFolder("__feature_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
+const testing = pathToFileURL(path.join(root, "src", "external", "testing.js")).href
 
 function compile(name, source, options = {}) {
     mkdirSync(outputDir, { recursive: true })
@@ -98,7 +100,8 @@ test("readonly struct fields", () => {
         }
         const user = User.new({ id: 1, name: "a" })
         user.name = "b"
-        try { user["id"] = 2 } catch (e) { log("blocked") }
+        const raw: any = user
+        try { raw["id"] = 2 } catch (e) { log("blocked") }
         log(user.id, user.name)
     `)
     assert.equal(result.status, 0, result.stderr)
@@ -121,7 +124,8 @@ test("Enum.from turns raw values into members", () => {
             Admin: 2
         }
         log(Role.from(2) == Role.Admin)
-        try { Role.from(7) } catch (e) { log(e.message) }
+        const raw: int = 7
+        try { Role.from(raw) } catch (e) { log(e.message) }
     `)
     assert.equal(result.status, 0, result.stderr)
     assert.equal(result.stdout.trim(), `true\n7 is not a value of enum "Role"`)
@@ -141,7 +145,8 @@ test("mutating a typed array checks only the new element", () => {
     const result = run("guard", `
         let list: int[] = [1, 2]
         list.push(3)
-        try { list.push("x") } catch (e) { log("rejected") }
+        const text: any = "x"
+        try { list.push(text) } catch (e) { log("rejected") }
         log(list.join(","))
     `)
     assert.equal(result.status, 0, result.stderr)
@@ -159,7 +164,7 @@ test("release builds leave implicit checks out", () => {
 })
 
 test("async tests are awaited and describe groups names", () => {
-    const result = run("async-tests", `
+    const { file } = compile("async-tests", `
         describe("math", () => {
             test("waits", async () => {
                 await new Promise(resolve => setTimeout(resolve, 20))
@@ -171,7 +176,9 @@ test("async tests are awaited and describe groups names", () => {
             })
         })
         test("runs after", () => { log("third") })
-    `)
+    `, { test: true })
+    writeFileSync(file, `import ${JSON.stringify(testing)};\n${readFileSync(file, "utf8")}`)
+    const result = spawnSync(process.execPath, ["--no-warnings", file], { cwd: root, encoding: "utf8" })
     assert.notEqual(result.status, 0)
     assert.match(result.stdout, /✓ math › waits\n {2}✗ math › fails late[\s\S]*third[\s\S]*2 passed, 1 failed/)
 })
@@ -207,7 +214,7 @@ test("an async call nobody awaits inside an async function is reported", () => {
 test("async callbacks in forEach and filter are reported", () => {
     assert.match(staticError(`[1, 2].forEach(async x => { await null })`), /forEach doesn't wait for async callbacks/)
     assert.match(staticError(`async func keep(x) { return x > 1 }\nconst kept = [1, 2].filter(keep)`), /filter doesn't wait for async callbacks/)
-    assert.equal(staticError(`const all = Promise.all([1, 2].map(async x => x))\n[1, 2].forEach(x => log(x))`), null)
+    assert.equal(staticError(`const all = Promise.all([1, 2].map(async x => x));\n[1, 2].forEach(x => log(x))`), null)
 })
 
 test("errors of fire-and-forget async calls get the Slim error output", () => {

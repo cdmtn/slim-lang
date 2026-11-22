@@ -27,9 +27,10 @@ const packagePath = path.join(root, "package.json")
 
 function runScripts(...scripts) {
     for (const [script, ...args] of scripts) {
-        const { status, signal } = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" })
+        const { status, error: spawnError } = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" })
         if (status !== 0) {
-            process.exitCode = status ?? (signal ? 1 : 0)
+            if (spawnError) console.error(spawnError.message)
+            process.exitCode = status || 1
             return false
         }
     }
@@ -146,18 +147,17 @@ program
     .command("server")
     .description("Run a Slim server (prod by default; --dev for watch + live reload)")
     .option("-D, --dev", "Dev mode: watch, rebuild, live reload, request logs")
-    .option("-H, --hot", "Dev mode with hot reload")
     .option("-R, --release", "Run without runtime type checks")
     .action((params) => {
         slimConfigCheck()
 
-        const dev = Boolean(params.dev || params.hot || serverConfigRead().dev === true)
+        const dev = Boolean(params.dev || serverConfigRead().dev === true)
 
         if(params.release) process.env.SLIM_RELEASE = "1"
 
         if(dev) {
             log("Starting Slim dev server (watch + live reload)...")
-            runScripts(params.hot ? [devScript, "--hot"] : [devScript])
+            runScripts([devScript])
         }
         else {
             log("Starting Slim server...")
@@ -212,10 +212,16 @@ program
     .action((params) => {
         if(params.config) {
             try {
-                fs.writeFileSync(slimConfigPath, JSON.stringify(defaultConfig, null, 4), 'utf8');
-                log('Slim config create in root dir');
+                if(fs.existsSync(slimConfigPath)) {
+                    log('slimconfig.json already exists, leaving it untouched');
+                }
+                else {
+                    fs.writeFileSync(slimConfigPath, JSON.stringify(defaultConfig, null, 4), 'utf8');
+                    log('Slim config create in root dir');
+                }
             } catch (err) {
-                error('An error occurred while creating config:', err);
+                error(`Could not create slimconfig.json: ${err?.message ?? err}`);
+                process.exitCode = 1;
             }
         }
         if(params.server) {
@@ -238,15 +244,19 @@ program
                     log(`Created ${path.relative(root, serverConfigPath)}`)
                 }
             } catch (err) {
-                error('An error occurred while creating slimserver.json:', err);
+                error(`Could not create slimserver.json: ${err?.message ?? err}`);
+                process.exitCode = 1;
             }
         }
         if(params.file) {
+            const fileName = params.file.endsWith(".slim") ? params.file : params.file + ".slim"
             try {
-                fs.writeFileSync(params.file + ".slim", "", 'utf8');
-                log(`File ${params.file}.slim created`);
+                fs.writeFileSync(fileName, "", { encoding: 'utf8', flag: 'wx' });
+                log(`File ${fileName} created`);
             } catch (err) {
-                error('An error occurred while creating file:', err);
+                if (err.code === "EEXIST") error(`File ${fileName} already exists`);
+                else error(`Could not create ${fileName}: ${err?.message ?? err}`);
+                process.exitCode = 1;
             }
         }
         if(!params.config && !params.server && !params.file) {
@@ -261,8 +271,6 @@ program
     .command("version")
     .option("--check", "Check actual version")
     .action(async (params) => {
-        packageCheck()
-
         if(params.check) {
             const githubRepo = pkg.repository.url.split("git+https://github.com/")[1].trim().split(".git")[0]
             if(!/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
@@ -359,8 +367,10 @@ program
     .command("test")
     .description("Run Slim test files (*.test.slim)")
     .argument("[file]", "Run a specific test file")
-    .action((file) => {
-        process.exitCode = runTests(file)
+    .option("-f, --filter <text>", "Only run tests whose name contains the text")
+    .option("--coverage", "Print which lines of the tested .slim files ran")
+    .action((file, options) => {
+        process.exitCode = runTests(file, { filter: options.filter, coverage: options.coverage })
     });
 
 program
@@ -392,10 +402,7 @@ program
     });
 
 
-try {
-    program.parse();
-}
-catch (err) {
+program.parseAsync().catch(err => {
     error(err?.message ?? err)
     process.exitCode = 1
-}
+})

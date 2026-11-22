@@ -5,9 +5,10 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__destructure_tests__")
+const outputDir = outputFolder("__destructure_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function runSlim(name, source) {
@@ -38,9 +39,11 @@ test("a destructured source that violates the type is rejected", () => {
     const result = runSlim("object-bad", `
         struct User { name: string
             id: int }
-        const { name, id }: User = { name: "x", id: "bad" }
+        const raw: any = { name: "x", id: "bad" }
+        const { name, id }: User = raw
     `)
     assert.notEqual(result.status, 0)
+    assert.throws(() => runSlim("object-bad-static", `struct User { name: string\n    id: int }\nconst { name, id }: User = { name: "x", id: "bad" }`), /"User\.id" expects int, got string/)
 })
 
 test("array destructuring validates against a tuple type", () => {

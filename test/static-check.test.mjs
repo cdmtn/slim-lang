@@ -112,8 +112,10 @@ test("arithmetic results are inferred", () => {
 })
 
 test("what the checker cannot resolve it leaves alone", () => {
-    accepted(`let x: int = compute()`)
-    accepted(`let v: Imported = 1`)
+    accepted(`const lib: any = {}
+let x: int = lib.compute()`)
+    accepted(`use { Imported } from "./types"
+let v: Imported = 1`)
     accepted(`type Positive(v) { return v > 0 }\nlet n: Positive = 5`)
     accepted(`let v: any = "s"`)
     accepted(`let p: [int, string] = [1, "a"]`)
@@ -167,7 +169,7 @@ test("a match over an enum must be exhaustive", () => {
     )
     accepted(`${source}const x = match (R.A) { R.A => 1, R.B => 2 }`)
     accepted(`${source}const x = match (R.A) { R.A => 1, _ => 0 }`)
-    accepted(`${source}const x = match (R.A) { v when v == 0 => 1 }`)
+    accepted(`${source}const x = match (R.A) { v when v.value == 0 => 1 }`)
     accepted(`const x = match (5) { 1 => "a" }`)
 })
 

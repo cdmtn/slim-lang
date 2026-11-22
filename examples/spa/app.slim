@@ -1,0 +1,142 @@
+use { Router, Link, navigate, title, head, navigating, onLeave, onShow } from @slim/router
+use { loadProjects, loadProject, session } from "./api"
+
+component Home() {
+    title("Home · Slim SPA")
+    state clicks = 0
+    state shown = 0
+    onShow(() => shown++)
+    return <section class="home">
+        <h1>Home</h1>
+        <p>This page is kept: its counter and scroll survive a trip to another page.</p>
+        <button class="count" onClick=${() => clicks++}>Clicked ${clicks} times</button>
+        <p class="shown">Shown again ${shown} times</p>
+        <p>A plain link inside a page goes through the router too: <a class="plain" href="/nowhere">a page that isn't there</a></p>
+        <div class="tall">${Array.from({ length: 40 }, (_, i) => <p>Line ${i + 1}</p>)}</div>
+    </section>
+}
+
+component ProjectList({ data }) {
+    title("Projects · Slim SPA")
+    return <section>
+        <h1>Projects</h1>
+        <ul class="projects">
+            ${(data ?? []).map(project => <li><Link href=${String(project.id)}>${project.name}</Link></li>)}
+        </ul>
+    </section>
+}
+
+component Overview({ data }) {
+    return <p class="about">${data?.about ?? "No such project"}</p>
+}
+
+component Files({ data }) {
+    state filter = ""
+    return <div class="files">
+        <input class="filter" placeholder="Filter files" bind:value=${filter} />
+        <ul>${(data?.files ?? []).filter(file => file.includes(filter)).map(file => <li>${file}</li>)}</ul>
+    </div>
+}
+
+component Settings({ params }) {
+    return <p class="settings">Settings of project ${params.id}</p>
+}
+
+const project = ({ params }) => loadProject(parseInt(params.id, 10))
+
+const projectTabs = {
+    "/": { page: Overview, load: project },
+    "/files": { page: Files, load: project },
+    "/settings": Settings
+}
+
+component ProjectPage({ data }) {
+    head(() => ({
+        title: `${data?.name ?? "Project"} · Slim SPA`,
+        description: data?.about,
+        meta: { "og:title": data?.name }
+    }))
+    return <section class="project">
+        <h1>${data?.name ?? "Not found"}</h1>
+        <nav class="tabs">
+            <Link href="." active="on">Overview</Link>
+            <Link href="files" active="on">Files</Link>
+            <Link href="settings" active="on">Settings</Link>
+            <Link href=".." >All projects</Link>
+        </nav>
+        <Router routes=${projectTabs} keep />
+    </section>
+}
+
+const projectRoutes = {
+    "/": { page: ProjectList, load: () => loadProjects() },
+    "/:id/*": { page: ProjectPage, load: project }
+}
+
+component Projects() {
+    return <Router routes=${projectRoutes} keep />
+}
+
+component Editor() {
+    title("Editor · Slim SPA")
+    state text = ""
+    state saved = ""
+    state warned = false
+    onLeave(() => {
+        if (text == saved) return true
+        warned = true
+        return false
+    })
+    return <section class="editor">
+        <h1>Editor</h1>
+        <textarea class="text" bind:value=${text}></textarea>
+        <button class="save" onClick=${() => { saved = text; warned = false }}>Save</button>
+        ${warned ? <p class="warning">Unsaved changes: save them or <button class="discard" onClick=${() => { text = saved; warned = false }}>discard</button></p> : ""}
+    </section>
+}
+
+component Login() {
+    title("Sign in · Slim SPA")
+    return <section>
+        <h1>Sign in</h1>
+        <button class="sign-in" onClick=${() => { session.signedIn = true; navigate("/admin") }}>Sign in</button>
+    </section>
+}
+
+component Admin() {
+    title("Admin · Slim SPA")
+    return <section>
+        <h1>Admin</h1>
+        <button class="sign-out" onClick=${() => { session.signedIn = false; navigate("/") }}>Sign out</button>
+    </section>
+}
+
+component NotFound({ path }) {
+    title("Not found · Slim SPA")
+    return <section><h1>Not found</h1><p>Nothing at ${path}</p></section>
+}
+
+const routes = {
+    "/": Home,
+    "/projects/*": Projects,
+    "/editor": Editor,
+    "/login": Login,
+    "/admin": Admin,
+    "*": NotFound
+}
+
+const guard = match => !match.path.startsWith("/admin") || session.signedIn || "/login"
+
+export component App(props) {
+    head({ title: "Slim SPA", description: "A single-page app on Slim's server and router" })
+    return <div class="app">
+        <div class=${navigating() ? "progress on" : "progress"}></div>
+        <nav class="top">
+            <Link href="/" active="on">Home</Link>
+            <Link href="/projects" active="on" prefix>Projects</Link>
+            <Link href="/editor" active="on">Editor</Link>
+            <Link href="/admin" active="on">Admin</Link>
+        </nav>
+        <main><Router routes=${routes} keep=${["/", "/projects/*"]} guard=${guard} intercept /></main>
+    </div>
+}

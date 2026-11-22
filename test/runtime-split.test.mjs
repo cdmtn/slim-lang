@@ -37,9 +37,11 @@ test("nothing the core runtime pulls in leaves the runtime folder", () => {
         const source = readFileSync(path.join(external, file), "utf8")
 
         for (const [, specifier] of source.matchAll(/^import[\s\S]*?from "(.+?)"/gm)) {
-            assert.match(specifier, /^\.\//,
+            assert.match(specifier, /^\.\.?\//,
                 `${file} imports "${specifier}" — the core runtime must stay free of Node and npm`)
-            queue.push(specifier.slice(2))
+            const target = path.posix.join(path.posix.dirname(file), specifier)
+            assert.ok(!target.startsWith("../"), `${file} imports "${specifier}" from outside the runtime folder`)
+            queue.push(target)
         }
 
         const lines = source.split("\n")
@@ -63,6 +65,8 @@ test("a compiled core program runs in an engine without process", () => {
 
     try {
         const source = `
+type positive(value: number) { return value > 0 }
+
 enum Role {
     Member: 0
     Admin: 2

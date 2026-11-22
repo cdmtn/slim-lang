@@ -40,21 +40,36 @@ export function didYouMean(name, candidates) {
 
 export const KNOWN_GLOBALS = new Set([
     "log", "warn", "error", "info", "debug", "type", "Component", "Type", "Struct", "onError",
-    "test", "describe", "assert", "assertEqual", "PI", "raw", "escapeHtml", "htmlToVdom",
+    "raw", "escapeHtml", "htmlToVdom",
     "StructError", "StructPassedError", "StructExpectError", "ArgumentDeclarationTypeError",
-    "onMount", "onConnect", "onUnmount", "effect", "watch", "untrack", "batch", "onCleanup", "resource", "renderToString", "renderToStringAsync", "hydrate", "createContext", "provide", "inject", "catchError", "createForm", "Router", "Link", "Portal", "navigate", "route", "matchRoute",
+    "onMount", "onConnect", "onUnmount", "expose", "keepAlive", "onRemove", "listen", "render", "upgrade", "dispose", "setHtml", "effect", "watch", "untrack", "batch", "onCleanup", "touch", "resource", "provideData", "renderToString", "renderToStringAsync", "hydrate", "createContext", "provide", "inject", "catchError", "Portal",
     "window", "document", "navigator", "location", "history", "screen", "localStorage", "sessionStorage",
     "indexedDB", "alert", "confirm", "prompt", "event", "self", "top", "parent", "frames", "customElements",
     "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
-    "getComputedStyle", "matchMedia", "scrollTo", "scrollBy", "open", "close", "innerWidth", "innerHeight",
+    "getComputedStyle", "matchMedia", "scrollTo", "scrollBy", "scrollX", "scrollY", "addEventListener", "removeEventListener", "dispatchEvent", "open", "close", "innerWidth", "innerHeight",
     "devicePixelRatio", "caches", "Image", "Audio", "Option", "FileReader", "DOMParser", "XMLHttpRequest",
     "CSS", "Node", "Element", "HTMLElement", "SVGElement", "ShadowRoot", "DocumentFragment",
     "MutationObserver", "IntersectionObserver", "ResizeObserver", "Worker", "SharedWorker", "Notification",
-    "process", "Buffer", "require", "module", "exports", "__dirname", "__filename", "global"
+    "Range", "Selection", "getSelection", "Text", "Comment", "NodeFilter", "TreeWalker", "XMLSerializer", "DataTransfer",
+    "ClipboardItem", "FontFace", "Highlight", "Path2D", "ImageData", "ImageBitmap", "createImageBitmap", "OffscreenCanvas",
+    "AudioContext", "OfflineAudioContext", "AudioBuffer", "AudioWorkletNode", "MediaRecorder", "MediaStream", "MediaStreamTrack",
+    "MediaStreamTrackProcessor", "MediaStreamTrackGenerator", "MediaSource", "VideoFrame", "AudioData", "VideoEncoder",
+    "VideoDecoder", "AudioEncoder", "AudioDecoder", "EncodedVideoChunk", "EncodedAudioChunk",
+    "process", "Buffer", "require", "module", "exports", "__dirname", "__filename", "global",
+    "speechSynthesis", "visualViewport", "origin", "outerWidth", "outerHeight", "pageXOffset", "pageYOffset", "screenX", "screenY",
+    "screenLeft", "screenTop", "print", "focus", "blur", "stop", "moveTo", "moveBy", "resizeTo", "resizeBy", "postMessage", "closed",
+    "opener", "frameElement", "isSecureContext", "crossOriginIsolated", "clientInformation", "external", "menubar", "toolbar",
+    "locationbar", "personalbar", "scrollbars", "statusbar", "scroll", "showOpenFilePicker", "showSaveFilePicker", "showDirectoryPicker",
+    "cookieStore", "launchQueue", "trustedTypes", "scheduler", "webkitURL", "chrome", "browser", "Deno", "Bun",
+    "EventSource", "Storage", "File", "FileList", "Clipboard", "Cache", "CacheStorage", "PushManager", "ServiceWorker",
+    "PaymentRequest", "Geolocation", "WakeLock", "Gamepad", "Bluetooth", "USB", "Serial", "HID", "XPathResult", "XPathEvaluator",
+    "NamedNodeMap", "NodeList", "HTMLCollection", "Attr", "CharacterData", "CDATASection", "ProcessingInstruction", "Document",
+    "DocumentType", "Window", "History", "Location", "Navigator", "Screen", "Touch", "TouchList", "Animation", "AnimationEffect",
+    "KeyframeEffect", "AnimationTimeline", "DocumentTimeline", "Scheduler", "TaskController", "Selection", "Headers", "Request"
 ])
 
-const GLOBAL_PATTERN = /^(?:HTML|SVG|DOM|CSS|RTC|WebGL|Web|IDB)|(?:Event|Element|Observer|Error|Array)$/
+const GLOBAL_PATTERN = /^(?:HTML|SVG|DOM|CSS|RTC|WebGL|Web|IDB)|^[A-Z][A-Za-z0-9]*(?:Event|Element|Observer|Error|Array)$/
 
 export function isKnownGlobal(name) {
-    return KNOWN_GLOBALS.has(name) || name in globalThis || GLOBAL_PATTERN.test(name)
+    return KNOWN_GLOBALS.has(name) || (name in globalThis && !(name in Object.prototype)) || GLOBAL_PATTERN.test(name)
 }

@@ -1,5 +1,5 @@
 import {
-    ANY, named, literal, arrayOf, tupleOf, genericOf, enumMember, unionOf, intersectionOf, nullable, functionOf
+    ANY, named, literal, arrayOf, tupleOf, genericOf, enumMember, unionOf, intersectionOf, nullable, functionOf, shapeOf, readonlyOf, keyofOf, indexOf
 } from "../external/typeSyntax.js"
 
 const KEYWORDS = {
@@ -13,19 +13,18 @@ const KEYWORDS = {
     TSVoidKeyword: "undefined",
     TSObjectKeyword: "object",
     TSBigIntKeyword: "bigint",
-    TSSymbolKeyword: "symbol"
+    TSSymbolKeyword: "symbol",
+    TSNeverKeyword: "never"
 }
 
+const TYPE_WORDS = new Set(["int", "float", "number", "string", "bool", "object", "array", "any", "bigint", "symbol"])
+
 const UNSUPPORTED = {
-    TSTypeLiteral: "object type literals are not supported, declare a struct instead",
     TSMappedType: "mapped types are not supported",
     TSConditionalType: "conditional types are not supported",
-    TSIndexedAccessType: "indexed access types are not supported",
     TSTypeQuery: "\"typeof\" in a type position is not supported, use \"type Name = typeof value\"",
     TSInferType: "\"infer\" is not supported",
     TSTemplateLiteralType: "template literal types are not supported",
-    TSThisType: "\"this\" type is not supported",
-    TSNeverKeyword: "\"never\" type is not supported",
     TSImportType: "import types are not supported, use \"use\" to bring the type in"
 }
 
@@ -58,6 +57,7 @@ export function typeFromAST(node, fail) {
     if (node.type === "TSTypeAnnotation") return convert(node.typeAnnotation)
     if (node.type in KEYWORDS) return named(KEYWORDS[node.type])
     if (node.type in UNSUPPORTED) return fail(node, UNSUPPORTED[node.type])
+    if (node.type === "TSThisType") return named("this")
 
     switch (node.type) {
         case "TSTypeReference": {
@@ -66,6 +66,16 @@ export function typeFromAST(node, fail) {
             return args ? genericOf(name, args.map(convert)) : named(name)
         }
         case "TSArrayType": return arrayOf(convert(node.elementType))
+        case "TSIndexedAccessType": return indexOf(convert(node.objectType), convert(node.indexType))
+        case "TSTypeLiteral":
+            return shapeOf(node.members.map(member => {
+                if (member.type !== "TSPropertySignature") {
+                    return fail(member, "an object type holds fields only: write a method as a field with a function type, run: () => int")
+                }
+                const name = member.computed ? null : member.key.type === "Identifier" ? member.key.name : member.key.type === "StringLiteral" ? member.key.value : null
+                if (name === null) return fail(member, "a field of an object type needs a plain name")
+                return { name, type: member.typeAnnotation ? convert(member.typeAnnotation) : ANY, optional: !!member.optional }
+            }))
         case "TSTupleType":
             return tupleOf(node.elementTypes.map(element => {
                 if (element.type === "TSNamedTupleMember") {
@@ -82,10 +92,23 @@ export function typeFromAST(node, fail) {
         case "TSParenthesizedType": return convert(node.typeAnnotation)
         case "TSLiteralType": return literalType(node, fail)
         case "TSFunctionType": {
-            const params = (node.parameters ?? node.params).map(param => {
-                if (param.type === "RestElement") return fail(param, "rest parameters in function types are not supported")
+            const all = node.parameters ?? node.params
+            const params = all.map((param, index) => {
+                if (param.type === "RestElement") {
+                    if (index !== all.length - 1) return fail(param, "a rest parameter must be the last parameter")
+                    const annotation = param.typeAnnotation ?? param.argument?.typeAnnotation
+                    const type = annotation ? convert(annotation) : arrayOf(ANY)
+                    if (type.kind !== "array" && type.kind !== "tuple" && !(type.kind === "named" && type.name === "array") && type.kind !== "any") {
+                        return fail(param, "a rest parameter needs an array type: (...args: any[]) => void")
+                    }
+                    return { name: param.argument?.type === "Identifier" ? param.argument.name : null, type, rest: true }
+                }
                 const annotation = param.typeAnnotation
-                return { name: param.type === "Identifier" ? param.name : null, type: annotation ? convert(annotation) : ANY }
+                if (!annotation && param.type === "Identifier" && TYPE_WORDS.has(param.name)) {
+                    return fail(param, `"${param.name}" here is a parameter name, not its type — write (value: ${param.name}) => ...`)
+                }
+                const parameter = { name: param.type === "Identifier" ? param.name : null, type: annotation ? convert(annotation) : ANY }
+                return param.optional ? { ...parameter, optional: true } : parameter
             })
             const returns = node.typeAnnotation ?? node.returnType
             return functionOf(params, returns ? convert(returns) : ANY)
@@ -93,7 +116,8 @@ export function typeFromAST(node, fail) {
         case "TSConstructorType":
             return named("function")
         case "TSTypeOperator":
-            if (node.operator === "readonly") return convert(node.typeAnnotation)
+            if (node.operator === "readonly") return readonlyOf(convert(node.typeAnnotation))
+            if (node.operator === "keyof") return keyofOf(convert(node.typeAnnotation))
             return fail(node, `"${node.operator}" types are not supported`)
         case "TSTypePredicate":
             return named("bool")

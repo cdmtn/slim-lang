@@ -1,3 +1,9 @@
+import { provideData, serverData, serverRendering } from "./reactive/server.js"
+import { componentKey, identify, resource, sweep, watchKeys } from "./reactive/resource.js"
+import { __lazy_children__, __live__, catchError, createContext, inject, provide } from "./reactive/context.js"
+export { setServerRendering, setServerData, setHydrationData, setServerStore, setClientStore, provideData, withoutHydration, awaitOnServer } from "./reactive/server.js"
+export { resource } from "./reactive/resource.js"
+export { createContext, __live__, __lazy_children__, provide, inject, catchError, live } from "./reactive/context.js"
 
 const CLEAN = 0
 const CHECK = 1
@@ -5,28 +11,14 @@ const DIRTY = 2
 const DISPOSED = 3
 
 let observer = null
-let owner = null
+export let owner = null
 let batchDepth = 0
 let queue = []
 let flushing = false
 let pendingEffects = null
-let serverRendering = false
+let writes = 0
+
 let rootHook = null
-
-export function setServerRendering(on) {
-    serverRendering = on
-}
-
-let serverData = null
-let hydrationData = null
-
-export function setServerData(data) {
-    serverData = data
-}
-
-export function setHydrationData(data) {
-    hydrationData = data
-}
 
 export function setRootHook(fn) {
     rootHook = fn
@@ -47,14 +39,35 @@ export class Owner {
         const cleanups = this.cleanups
         this.owned = null
         this.cleanups = null
-        if (owned) for (let i = 0; i < owned.length; i++) owned[i].dispose()
-        if (cleanups) for (let i = 0; i < cleanups.length; i++) cleanups[i]()
+        let failed = false
+        let failure
+        if (owned) for (let i = 0; i < owned.length; i++) {
+            try {
+                owned[i].dispose()
+            } catch (error) {
+                if (!failed) {
+                    failed = true
+                    failure = error
+                }
+            }
+        }
+        if (cleanups) for (let i = 0; i < cleanups.length; i++) {
+            try {
+                cleanups[i]()
+            } catch (error) {
+                if (!failed) {
+                    failed = true
+                    failure = error
+                }
+            }
+        }
+        if (failed) throw failure
     }
 
     dispose() {
         if (this.state === DISPOSED) return
-        this.clean()
         this.state = DISPOSED
+        this.clean()
     }
 }
 
@@ -63,6 +76,7 @@ export class Signal {
         this.value = value
         this.observers = null
         this.observerSlots = null
+        this.equals = null
     }
 
     get v() {
@@ -71,7 +85,7 @@ export class Signal {
     }
 
     set v(next) {
-        if (Object.is(next, this.value)) return
+        if (this.equals ? this.equals(this.value, next) : Object.is(next, this.value)) return
         this.value = next
         this.notify()
     }
@@ -82,12 +96,13 @@ export class Signal {
 
     notify() {
         if (!this.observers || this.observers.length === 0) return
+        writes++
         mark(this.observers, DIRTY)
-        if (batchDepth === 0) flush()
+        if (batchDepth === 0) settle()
     }
 }
 
-class Computation extends Owner {
+export class Computation extends Owner {
     constructor(fn, isEffect) {
         super(owner, false)
         this.fn = fn
@@ -100,23 +115,41 @@ class Computation extends Owner {
         this.isEffect = isEffect
         this.isUser = false
         this.runs = 0
+        this.failed = false
+        this.error = undefined
+        this.equals = null
+        this.running = false
+        this.rerun = false
+        this.requeued = false
     }
 
     get v() {
-        if (this.state !== CLEAN && this.state !== DISPOSED) update(this)
-        if (observer) track(this)
+        if (watchers !== null && batchDepth > 0 && !settling) settleWatchers()
+        if (this.state === CLEAN || this.state === DISPOSED) {
+            if (observer) track(this)
+        } else {
+            try {
+                update(this)
+            } finally {
+                if (observer) follow(this)
+            }
+        }
+        if (this.failed) throw this.error
         return this.value
     }
 
     peek() {
+        if (watchers !== null && batchDepth > 0 && !settling) settleWatchers()
         if (this.state !== CLEAN && this.state !== DISPOSED) update(this)
+        if (this.failed) throw this.error
         return this.value
     }
 
     notify() {
         if (!this.observers || this.observers.length === 0) return
+        writes++
         mark(this.observers, DIRTY)
-        if (batchDepth === 0) flush()
+        if (batchDepth === 0) settle()
     }
 
     run() {
@@ -129,10 +162,9 @@ class Computation extends Owner {
         owner = this
         try {
             const next = this.fn(this.value)
-            if (!this.isEffect && !Object.is(next, this.value) && this.observers) {
-                for (let i = 0; i < this.observers.length; i++) this.observers[i].state = DIRTY
-            }
+            const changed = !this.isEffect && (this.failed || !(this.equals ? this.equals(this.value, next) : Object.is(next, this.value)))
             this.value = next
+            if (changed) stale(this)
         } finally {
             observer = previousObserver
             owner = previousOwner
@@ -142,8 +174,8 @@ class Computation extends Owner {
     dispose() {
         if (this.state === DISPOSED) return
         unsubscribe(this)
-        this.clean()
         this.state = DISPOSED
+        this.clean()
     }
 }
 
@@ -168,6 +200,21 @@ function track(source) {
     } else {
         source.observers = [o]
         source.observerSlots = [observerSlot]
+    }
+}
+
+function follow(source) {
+    track(source)
+    if (source.state !== CLEAN && source.state !== DISPOSED) mark([observer], CHECK)
+}
+
+function stale(node) {
+    const observers = node.observers
+    if (!observers) return
+    for (let i = 0; i < observers.length; i++) {
+        const o = observers[i]
+        if (o.running && o.isEffect) o.rerun = DIRTY
+        else mark([o], DIRTY)
     }
 }
 
@@ -196,28 +243,133 @@ function unsubscribe(node) {
 function mark(observers, state) {
     for (let i = 0; i < observers.length; i++) {
         const o = observers[i]
-        if (o.state >= state) continue
+        if (o.state >= state) {
+            if (o.running && o.isEffect && (state === CHECK || (observer !== null && observer !== o)) && !(o.rerun >= state)) o.rerun = state
+            continue
+        }
         const wasClean = o.state === CLEAN
         o.state = state
         if (!wasClean) continue
-        if (o.isEffect) queue.push(o)
+        if (o.isWatcher) (watchers ??= []).push(o)
+        else if (o.isEffect) queue.push(o)
         else if (o.observers) mark(o.observers, CHECK)
     }
 }
 
-function update(node) {
+let watchers = null
+
+function settleWatchers() {
+    if (!watchers || settling) return
+    settling = true
+    batchDepth++
+    try {
+        while (watchers) {
+            const pending = watchers
+            watchers = null
+            for (const node of pending) if (node.state !== CLEAN && node.state !== DISPOSED) update(node)
+        }
+    } finally {
+        settling = false
+        batchDepth--
+    }
+}
+
+let settling = false
+
+function settle() {
+    settleWatchers()
+    flush()
+}
+
+function runTop(node) {
+    const chain = []
+    for (let current = node; current; current = current.parent) {
+        if (current.state === DISPOSED) return
+        if (current instanceof Computation && current.state !== CLEAN) chain.push(current)
+        const driver = current.driver
+        if (driver && driver.state !== CLEAN && driver.state !== DISPOSED) chain.push(driver)
+    }
+    for (let i = chain.length - 1; i >= 0; i--) {
+        const current = chain[i]
+        if (current.state !== CLEAN && current.state !== DISPOSED) update(current)
+    }
+}
+
+export function update(node) {
+    if (node.running) return
     if (node.state === CHECK && node.sources) {
         const sources = node.sources
+        const before = writes
         for (let i = 0; i < sources.length; i++) {
             const source = sources[i]
             if (source instanceof Computation) {
-                update(source)
+                try {
+                    update(source)
+                } catch {
+                    node.state = DIRTY
+                }
+                if (source.state === CHECK || source.state === DIRTY) node.state = DIRTY
                 if (node.state === DIRTY) break
             }
         }
+        if (node.state === CHECK && writes !== before) {
+            for (let i = 0; i < sources.length; i++) {
+                const source = sources[i]
+                if (source instanceof Computation && (source.state === CHECK || source.state === DIRTY)) {
+                    node.state = DIRTY
+                    break
+                }
+            }
+        }
     }
-    if (node.state === DIRTY) node.run()
+    if (node.state === DIRTY) {
+        if (!node.isEffect) return compute(node)
+        node.requeued = false
+        node.running = true
+        try {
+            node.run()
+        } catch (error) {
+            node.running = false
+            const again = node.rerun
+            node.rerun = false
+            if (node.state !== DISPOSED) node.state = CLEAN
+            if (again && node.state !== DISPOSED) {
+                node.state = again
+                node.requeued = true
+                queue.push(node)
+            }
+            throw error
+        }
+        node.running = false
+        if (node.state === DISPOSED) return
+        node.state = CLEAN
+        if (!node.rerun) return
+        node.state = node.rerun
+        node.rerun = false
+        queue.push(node)
+        if (!flushing && batchDepth === 0) flush()
+        return
+    }
     if (node.state !== DISPOSED) node.state = CLEAN
+}
+
+function compute(node) {
+    node.state = CLEAN
+    node.running = true
+    batchDepth++
+    try {
+        node.run()
+        node.failed = false
+        node.error = undefined
+    } catch (error) {
+        node.failed = true
+        node.error = error
+        stale(node)
+        throw error
+    } finally {
+        node.running = false
+        if (--batchDepth === 0 && (queue.length > 0 || watchers)) settle()
+    }
 }
 
 function handleError(node, error) {
@@ -237,7 +389,8 @@ function flush() {
     flushing = true
     let failure = null
     try {
-        for (let round = 0; queue.length > 0; round++) {
+        for (let round = 0; queue.length > 0 || (watchers && !settling); round++) {
+            settleWatchers()
             if (round === MAX_ROUNDS) {
                 queue = []
                 throw new Error("Effects keep changing the state they read: an effect writes a value it depends on")
@@ -247,9 +400,10 @@ function flush() {
             for (const effect of effects) {
                 if (effect.state === CLEAN || effect.state === DISPOSED) continue
                 try {
-                    update(effect)
+                    runTop(effect)
                 } catch (error) {
-                    effect.state = CLEAN
+                    if (effect.requeued) effect.requeued = false
+                    else if (effect.state !== DISPOSED) effect.state = CLEAN
                     if (!handleError(effect, error)) failure ??= error
                 }
             }
@@ -271,8 +425,27 @@ export function __render_effect__(fn) {
     return node
 }
 
-export function __signal__(value) {
-    return new Signal(value)
+const states = new Set()
+const touchers = new Set()
+const collected = new FinalizationRegistry(({ set, ref }) => set.delete(ref))
+
+function hold(set, value) {
+    const ref = new WeakRef(value)
+    set.add(ref)
+    collected.register(value, { set, ref }, ref)
+    return () => {
+        set.delete(ref)
+        collected.unregister(ref)
+    }
+}
+
+export function __signal__(value, equals) {
+    const node = new Signal(value)
+    if (typeof equals === "function") node.equals = equals
+    if (serverRendering) return node
+    const forget = hold(states, node)
+    if (owner) (owner.cleanups ??= []).push(forget)
+    return node
 }
 
 export function __computed__(fn) {
@@ -282,6 +455,31 @@ export function __computed__(fn) {
 }
 
 const notifying = () => !observer || observer.isUser
+
+const settled = (previous, next) => Object.is(previous, next) && (next === null || (typeof next !== "object" && typeof next !== "function"))
+
+export function __field__(fn) {
+    const node = __computed__(fn)
+    node.equals = settled
+    return node
+}
+
+export function onTouch(fn) {
+    return hold(touchers, fn)
+}
+
+export function touch(object) {
+    if (object === null || (typeof object !== "object" && typeof object !== "function") || !notifying()) return object
+    batch(() => {
+        (changedObjects ??= new Set()).add(object)
+        for (const ref of states) {
+            const value = ref.deref()?.value
+            if (value === object || (Array.isArray(value) && value.includes(object))) ref.deref().notify()
+        }
+        for (const ref of touchers) ref.deref()?.(object)
+    })
+    return object
+}
 
 export function __mut__(source, result) {
     if (notifying()) source.notify()
@@ -318,12 +516,17 @@ export function batch(fn) {
     try {
         return fn()
     } finally {
-        if (--batchDepth === 0) flush()
+        if (--batchDepth === 0) settle()
     }
 }
 
 export function onCleanup(fn) {
     if (owner) (owner.cleanups ??= []).push(fn)
+}
+
+export function cleanupOf(target, fn) {
+    if (target.state === DISPOSED) fn()
+    else (target.cleanups ??= []).push(fn)
 }
 
 export function effect(fn) {
@@ -357,187 +560,11 @@ export function __is__(source, key, strict) {
             if (keys.size >= keys.limit) sweep(keys)
             keys.set(key, node = new Signal(undefined))
         }
+        if (!strict) keys.loose = true
         track(node)
     }
     const value = source.peek()
     return strict ? value === key : value == key
-}
-
-function sweep(keys) {
-    for (const [key, node] of keys) if (!node.observers?.length) keys.delete(key)
-    keys.limit = Math.max(256, keys.size * 2)
-}
-
-function watchKeys(source) {
-    const keys = new Map()
-    keys.limit = 256
-    let current = source.peek()
-    const watcher = new Computation(() => {
-        const next = source.v
-        if (Object.is(next, current)) return
-        for (const key of [current, next]) {
-            const node = keys.get(key)
-            if (!node) continue
-            if (node.observers?.length) node.notify()
-            else keys.delete(key)
-        }
-        current = next
-    }, true)
-    watcher.parent = null
-    update(watcher)
-    return keys
-}
-
-export function resource(first, second, third) {
-    const withSource = typeof second === "function"
-    const source = withSource ? first : null
-    const loader = withSource ? second : first
-    const value = new Signal(withSource ? third : second)
-    const loading = new Signal(true)
-    const error = new Signal(null)
-    let version = 0
-    let lastInput
-
-    const settle = result => {
-        if (result.error !== undefined) error.value = result.error
-        else value.value = result.value
-        loading.value = false
-    }
-
-    const start = (input, quiet = false) => {
-        const current = ++version
-        let pending
-        try {
-            pending = withSource ? loader(input) : loader()
-        } catch (failure) {
-            pending = Promise.reject(failure)
-        }
-        if (!quiet) {
-            untrack(() => batch(() => {
-                loading.v = true
-                error.v = null
-            }))
-        }
-        Promise.resolve(pending).then(
-            result => {
-                if (current === version) batch(() => { value.v = result; loading.v = false; error.v = null })
-            },
-            failure => {
-                if (current === version) batch(() => { error.v = failure; loading.v = false })
-            }
-        )
-    }
-
-    const api = {
-        get value() { return value.v },
-        get loading() { return loading.v },
-        get error() { return error.v },
-        set value(next) { value.v = next },
-        reload: () => untrack(() => start(lastInput))
-    }
-
-    if (serverRendering) {
-        const data = serverData
-        if (!data) return api
-        const slot = data.index++
-        const known = data.results[slot]
-        if (known) {
-            settle(known)
-        } else {
-            const pending = untrack(() => {
-                try {
-                    return Promise.resolve(withSource ? loader(source()) : loader())
-                } catch (failure) {
-                    return Promise.reject(failure)
-                }
-            })
-            data.pending.push(pending.then(
-                result => { data.results[slot] = { value: result } },
-                failure => { data.results[slot] = { error: failure } }
-            ))
-        }
-        return api
-    }
-
-    let hydrated = false
-    if (hydrationData && hydrationData.index < hydrationData.values.length) {
-        const sent = hydrationData.values[hydrationData.index++]
-        if (sent) {
-            settle(sent.error !== undefined ? { error: new Error(sent.error) } : sent)
-            hydrated = true
-        }
-    }
-
-    effect(() => {
-        if (withSource) {
-            const input = lastInput = source()
-            if (hydrated) {
-                hydrated = false
-                return
-            }
-            untrack(() => start(input))
-            return
-        }
-        start(undefined, hydrated)
-        hydrated = false
-    })
-    return api
-}
-
-
-export function createContext(fallback) {
-    return { fallback }
-}
-
-const LIVE = Symbol("live")
-
-export function __live__(read) {
-    return { [LIVE]: read }
-}
-
-export function provide(context, value) {
-    if (!owner) throw new Error("provide() can only be called while a component renders")
-    ;(owner.context ??= new Map()).set(context, value)
-}
-
-export function inject(context) {
-    for (let current = owner; current; current = current.parent) {
-        if (current.context?.has(context)) {
-            const value = current.context.get(context)
-            return value && typeof value === "object" && LIVE in value ? value[LIVE]() : value
-        }
-    }
-    return context?.fallback
-}
-
-
-export function catchError(render, fallback) {
-    const failed = new Signal(null)
-    const scope = new Owner()
-    scope.onError = error => { failed.v = error }
-    const reset = () => { failed.v = null }
-    const content = __computed__(() => {
-        const error = failed.v
-        if (error) return untrack(() => fallback(error, reset))
-        return runWithOwner(scope, () => {
-            try {
-                return render()
-            } catch (failure) {
-                failed.peek() === null && queueError(failed, failure)
-                return untrack(() => fallback(failure, reset))
-            }
-        })
-    })
-    return live(() => content.v)
-}
-
-export function live(read) {
-    read.__slimLive = true
-    return read
-}
-
-function queueError(failed, failure) {
-    failed.value = failure
 }
 
 export function runWithOwner(target, fn) {
@@ -557,9 +584,16 @@ export function getOwner() {
     return owner
 }
 
-export function __component__(fn) {
+export function __component__(fn, props) {
     const top = owner === null
     const scope = new Owner()
+    if (serverRendering && serverData) {
+        const slot = `${componentKey(scope.parent)}/${identify(fn, props)}`
+        const counts = serverData.components ??= new Map()
+        const seen = counts.get(slot) ?? 0
+        counts.set(slot, seen + 1)
+        scope.ssrKey = `${slot}#${seen}`
+    }
     const previousPending = pendingEffects
     const effects = pendingEffects = []
     let result
@@ -596,6 +630,6 @@ export function __defaults__(props, defaults) {
 }
 
 export const REACTIVE_GLOBALS = {
-    effect, watch, untrack, batch, onCleanup, resource, createContext, provide, inject, catchError,
-    __signal__, __computed__, __mut__, __mut_deep__, __is__, __render_effect__, __component__, __defaults__, __live__
+    effect, watch, untrack, batch, onCleanup, resource, provideData, createContext, provide, inject, catchError, touch,
+    __signal__, __computed__, __field__, __mut__, __mut_deep__, __is__, __render_effect__, __component__, __defaults__, __live__, __lazy_children__
 }

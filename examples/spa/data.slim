@@ -1,0 +1,16 @@
+export struct Project {
+    id: int
+    name: string
+    about: string
+    files: string[]
+}
+
+export const projects: Project[] = [
+    Project.new({ id: 1, name: "Atlas", about: "Maps for the whole team.", files: ["atlas.slim", "tiles.slim", "README.md"] }),
+    Project.new({ id: 2, name: "Beacon", about: "Alerts that wake the right person.", files: ["beacon.slim", "rules.json"] }),
+    Project.new({ id: 3, name: "Cinder", about: "A tiny build cache.", files: ["cache.slim", "hash.slim", "store.slim", "LICENSE"] })
+]
+
+export func findProject(id: int) -> Project? {
+    return projects.find(project => project.id == id) ?? null
+}

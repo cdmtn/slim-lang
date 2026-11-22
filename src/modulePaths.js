@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { isBuiltin } from "node:module"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const slimExtension = ".slim"
 
@@ -11,9 +11,20 @@ export function readJson(file) {
     return JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""))
 }
 
+let rootOverride = null
+
+export function projectRoot() {
+    return rootOverride ?? process.cwd()
+}
+
+export function setProjectRoot(dir) {
+    rootOverride = dir ? path.resolve(dir) : null
+    resetPathCaches()
+}
+
 export function readConfig() {
     try {
-        return readJson(path.join(process.cwd(), "slimconfig.json"))
+        return readJson(path.join(projectRoot(), "slimconfig.json"))
     } catch {
         return {}
     }
@@ -30,7 +41,7 @@ let projectPackagesCache = null
 export function projectPackagesDir() {
     if (projectPackagesCache) return projectPackagesCache
 
-    projectPackagesCache = path.resolve(configName("packages", "packages"))
+    projectPackagesCache = path.resolve(projectRoot(), configName("packages", "packages"))
     return projectPackagesCache
 }
 
@@ -42,13 +53,55 @@ export function distDirName() {
     return distDirCache
 }
 
-function packageRoots() {
-    const projectPackages = projectPackagesDir()
-    const shippedPackages = path.join(PACKAGE_ROOT, "packages")
+export function distDir() {
+    return path.resolve(projectRoot(), distDirName())
+}
 
-    return projectPackages === shippedPackages
-        ? [projectPackages]
-        : [projectPackages, shippedPackages]
+export const caseInsensitivePaths = process.platform === "win32" || process.platform === "darwin"
+const canonicalCache = new Map()
+
+export function pathKey(file) {
+    const abs = path.resolve(file)
+    return caseInsensitivePaths ? abs.toLowerCase() : abs
+}
+
+function nativeCase(abs) {
+    const lower = abs.toLowerCase()
+    const base = [projectRoot(), PACKAGE_ROOT].find(dir => lower.startsWith(dir.toLowerCase() + path.sep)) ?? path.parse(abs).root
+    let current = base
+    for (const part of abs.slice(base.length).split(path.sep).filter(Boolean)) {
+        let next = part
+        try {
+            const entries = fs.readdirSync(current)
+            if (!entries.includes(part)) next = entries.find(entry => entry.toLowerCase() === part.toLowerCase()) ?? part
+        } catch {
+        }
+        current = path.join(current, next)
+    }
+    return current
+}
+
+export function canonicalPath(file) {
+    const abs = path.resolve(file)
+    if (!caseInsensitivePaths) return abs
+    const cached = canonicalCache.get(abs)
+    if (cached) return cached
+    if (!fs.existsSync(abs)) return abs
+    const result = nativeCase(abs)
+    canonicalCache.set(abs, result)
+    return result
+}
+
+export function resetPathCaches() {
+    distDirCache = null
+    projectPackagesCache = null
+    canonicalCache.clear()
+}
+
+export const CORE_MODULES = path.join(PACKAGE_ROOT, "src", "lib")
+
+export function isCoreImport(raw) {
+    return raw === "@slim" || raw.startsWith("@slim/")
 }
 
 function isWithin(parent, target) {
@@ -63,66 +116,74 @@ function bareName(raw) {
 
 function isNodeModule(raw) {
     if (raw.startsWith(".") || path.isAbsolute(raw)) return false
-    return fs.existsSync(path.resolve("node_modules", bareName(raw)))
+    return fs.existsSync(path.resolve(projectRoot(), "node_modules", bareName(raw)))
 }
 
 const outputOverrides = new Map()
+let outputRoot = null
 
 export function setOutputPath(slimFile, outFile) {
-    outputOverrides.set(path.resolve(slimFile), path.resolve(outFile))
+    outputOverrides.set(canonicalPath(slimFile), path.resolve(outFile))
+}
+
+export function setOutputRoot(dir) {
+    outputRoot = dir ? path.resolve(dir) : null
 }
 
 export function getDistPath(slimFile) {
-    const abs = path.resolve(slimFile)
-    if (outputOverrides.has(abs)) return outputOverrides.get(abs)
+    const abs = canonicalPath(slimFile)
+    if (outputOverrides.has(abs)) {
+        const override = outputOverrides.get(abs)
+        return outputRoot ? path.resolve(outputRoot, path.relative(distDir(), override)) : override
+    }
 
-    const srcRoot = path.resolve("src")
-    const projectRoot = path.resolve(".")
-    const shippedPackages = path.join(PACKAGE_ROOT, "packages")
+    const root = projectRoot()
+    const srcRoot = path.resolve(root, "src")
     const projectPackages = projectPackagesDir()
 
     let relative
 
-    if (isWithin(shippedPackages, abs)) {
-        relative = path.join("packages", path.relative(shippedPackages, abs))
+    if (isWithin(CORE_MODULES, abs)) {
+        relative = path.join("@slim", path.relative(CORE_MODULES, abs))
     } else if (isWithin(projectPackages, abs)) {
         relative = path.join(path.basename(projectPackages), path.relative(projectPackages, abs))
     } else if (isWithin(srcRoot, abs)) {
         relative = path.relative(srcRoot, abs)
-    } else if (isWithin(projectRoot, abs)) {
-        relative = path.relative(projectRoot, abs)
+    } else if (isWithin(root, abs)) {
+        relative = path.relative(root, abs)
     } else {
-        const stripped = path.relative(projectRoot, abs).split(path.sep).filter(seg => seg !== "..")
+        const outside = path.relative(root, abs)
+        const stripped = (path.isAbsolute(outside) ? path.relative(path.parse(abs).root, abs) : outside).split(path.sep).filter(seg => seg && seg !== "..")
         relative = stripped.length ? path.join(...stripped) : path.basename(abs)
     }
 
-    return path.resolve(distDirName(), relative.replace(/\.slim$/, ".js"))
+    return path.resolve(outputRoot ?? distDir(), relative.replace(/\.slim$/, ".js"))
 }
 
 export function resolveSlimSource(raw, fromFile) {
     if (isBuiltin(raw)) return null
 
+    if (isCoreImport(raw)) return canonicalPath(path.join(CORE_MODULES, raw.slice("@slim/".length) + slimExtension))
+
     if (raw.startsWith("@")) {
         const packageName = raw.slice("@".length)
-        const roots = packageRoots()
+        const packagesRoot = projectPackagesDir()
 
-        for (const packagesRoot of roots) {
-            const fileSource = path.join(packagesRoot, packageName + slimExtension)
-            if (fs.existsSync(fileSource)) return fileSource
+        const fileSource = path.join(packagesRoot, packageName + slimExtension)
+        if (fs.existsSync(fileSource)) return canonicalPath(fileSource)
 
-            const directorySource = path.join(packagesRoot, packageName, "main.slim")
-            if (fs.existsSync(directorySource)) return directorySource
-        }
+        const directorySource = path.join(packagesRoot, packageName, "main.slim")
+        if (fs.existsSync(directorySource)) return canonicalPath(directorySource)
 
         if (isNodeModule(raw)) return null
 
-        return path.join(roots[0], packageName + slimExtension)
+        return fileSource
     }
 
     if (raw.endsWith(".js")) return null
 
     const localSource = path.resolve(path.dirname(fromFile), raw + slimExtension)
-    if (fs.existsSync(localSource)) return localSource
+    if (fs.existsSync(localSource)) return canonicalPath(localSource)
 
     if (isNodeModule(raw)) return null
 
@@ -137,6 +198,7 @@ export function resolveSlimImport(raw, fromFile, distFrom = getDistPath(fromFile
 
     const distTarget = getDistPath(slimSource)
     const relative = path.relative(path.dirname(distFrom), distTarget).replace(/\\/g, "/")
+    if (path.isAbsolute(relative)) return pathToFileURL(distTarget).href
 
-    return relative.startsWith(".") ? relative : "./" + relative
+    return relative.startsWith("./") || relative.startsWith("../") ? relative : "./" + relative
 }

@@ -27,6 +27,7 @@ test("a struct body with a brace-bearing field survives extraction", () => {
 })
 
 test("nested generic annotations compile", () => {
-    compilesToValidJs(`func f(m: Map<string, List<int>>) { return m }`)
-    compilesToValidJs(`let m: Map<string, Map<int, bool>> = x`)
+    compilesToValidJs(`func f(m: Map<string, Array<int>>) { return m }`)
+    compilesToValidJs(`const x: any = new Map()
+let m: Map<string, Map<int, bool>> = x`)
 })

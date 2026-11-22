@@ -14,6 +14,8 @@ export const holeMark = index => `${OPEN}${index}${CLOSE}`
 
 const isSpace = ch => ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f"
 const isLetter = ch => (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z")
+const EVENT_MODIFIERS = new Set(["capture", "passive", "once"])
+const ATTRIBUTE_PREFIXES = new Set(["bind", "xlink", "xml", "xmlns"])
 const isNameChar = ch => isLetter(ch) || (ch >= "0" && ch <= "9") || ch === "-" || ch === "_" || ch === ":" || ch === "."
 
 function splitHoles(text, decode) {
@@ -88,8 +90,9 @@ export function parseMarkup(quasis, fail) {
             const close = src.indexOf(">", i)
             const end = close === -1 ? len : close
             const name = src.slice(i + 2, end).trim().toLowerCase()
+            const dynamic = name.startsWith(OPEN)
             for (let s = stack.length - 1; s >= 1; s--) {
-                if (stack[s].tag.toLowerCase() === name) {
+                if (dynamic ? stack[s].dynamic !== undefined : stack[s].tag.toLowerCase() === name) {
                     stack.length = s
                     break
                 }
@@ -98,19 +101,29 @@ export function parseMarkup(quasis, fail) {
             continue
         }
 
-        if (!isLetter(src[i + 1] ?? "")) {
+        const dynamicTag = src[i + 1] === OPEN
+        if (!dynamicTag && !isLetter(src[i + 1] ?? "")) {
             top().children.push({ type: "text", value: "<" })
             i++
             continue
         }
 
-        let j = i + 1
-        while (j < len && isNameChar(src[j])) j++
-        const tag = src.slice(i + 1, j)
-        if (src[j] === OPEN) fail(`A \${...} can't be part of a tag name: <${tag}\${...}>`)
-        i = j
-
-        const element = { type: "element", tag, attrs: [], children: [], at: i - tag.length - 1 }
+        let element
+        if (dynamicTag) {
+            const at = i
+            i++
+            const dynamic = readHole()
+            if (src[i] !== undefined && !isSpace(src[i]) && src[i] !== ">" && src[i] !== "/") fail("A dynamic tag is written <${tag}>, with nothing joined to it")
+            element = { type: "element", tag: "slim-dynamic", dynamic, attrs: [], children: [], at }
+        } else {
+            let j = i + 1
+            while (j < len && isNameChar(src[j])) j++
+            const tag = src.slice(i + 1, j)
+            if (src[j] === OPEN) fail(`A \${...} can't be part of a tag name: <${tag}\${...}>`)
+            i = j
+            element = { type: "element", tag, attrs: [], children: [], at: i - tag.length - 1 }
+        }
+        const tag = element.tag
         let selfClosing = false
 
         while (i < len) {
@@ -130,6 +143,13 @@ export function parseMarkup(quasis, fail) {
             const name = src.slice(nameStart, i)
             if (!name) { i++; continue }
             if (src[i] === OPEN) fail(`A \${...} can't be part of an attribute name: ${name}\${...}`)
+            const colon = name.indexOf(":")
+            if (colon !== -1 && /^on[A-Z]/.test(name)) {
+                const unknown = name.slice(colon + 1).split(":").find(modifier => !EVENT_MODIFIERS.has(modifier))
+                if (unknown !== undefined) fail(`Unknown event modifier "${unknown}" in ${name}: use capture, passive or once`)
+            } else if (colon !== -1 && !ATTRIBUTE_PREFIXES.has(name.slice(0, colon))) {
+                fail(`Unknown attribute "${name}": a name with ":" must start with bind:, xlink:, xml: or xmlns:`)
+            }
 
             let k = i
             while (k < len && isSpace(src[k])) k++
@@ -158,8 +178,9 @@ export function parseMarkup(quasis, fail) {
             const holes = parts.filter(part => typeof part !== "string")
             if (holes.length === 0) {
                 element.attrs.push({ name, value: parts.join(""), at: nameStart })
-            } else if (/^on[A-Z]/.test(name) && !quoted && parts.length === 1) {
-                element.attrs.push({ event: name.slice(2).toLowerCase(), hole: holes[0].hole, name, at: nameStart })
+            } else if (/^on[A-Z]/.test(name) && holes.length === 1 && parts.every(part => typeof part !== "string" || part.trim() === "")) {
+                const [base, ...modifiers] = name.split(":")
+                element.attrs.push({ event: base.slice(2).toLowerCase(), modifiers, hole: holes[0].hole, name: base, at: nameStart })
             } else {
                 element.attrs.push({ name, parts, quoted, at: nameStart })
             }

@@ -8,9 +8,10 @@ import { transform } from "../src/transform.js"
 import { findUses, preprocess } from "../src/syntax/index.js"
 import { parseValue } from "../src/bin/helpers.js"
 import { StructResultError, UseError } from "../src/external/classErrors.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__regression_tests__")
+const outputDir = outputFolder("__regression_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function compile(name, source) {

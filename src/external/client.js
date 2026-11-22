@@ -26,7 +26,7 @@ export function type(obj) {
 
 	if (typeof obj === "object") return "object"
 	if (typeof obj === "string") return "string"
-	if (typeof obj === "number") return Number.isInteger(obj) ? "int" : "float"
+	if (typeof obj === "number") return Number.isSafeInteger(obj) ? "int" : "float"
 	if (typeof obj === "boolean") return "bool"
 	if (typeof obj === "function") return /^\s*class\s+/.test(obj.toString()) ? "class" : "function"
 

@@ -4,4 +4,4 @@ lock const user = {
     }
 }
 
-user.info.name = "Mike" // Error: locked object mutation
+try { Object.assign(user.info, { name: "Mike" }) } catch (e) { log(e.message) } // locked object mutation

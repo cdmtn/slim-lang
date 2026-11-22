@@ -1,0 +1,18 @@
+use { Project, projects, findProject } from "./data"
+
+const inBrowser = typeof location != "undefined"
+
+export const session = { signedIn: false }
+
+export async func loadProjects() -> Project[] {
+    if (!inBrowser) return projects
+    const response = await fetch("/api/projects")
+    return (await response.json()).map(item => Project.new(item))
+}
+
+export async func loadProject(id: int) -> Project? {
+    if (!inBrowser) return findProject(id)
+    const response = await fetch(`/api/projects/${id}`)
+    const item = await response.json()
+    return item ? Project.new(item) : null
+}

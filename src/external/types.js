@@ -1,4 +1,4 @@
-import { type } from "./core.js";
+import { type } from "./runtime/matching.js"
 
 export const SlimVariableTypes = Object.create(null)
 

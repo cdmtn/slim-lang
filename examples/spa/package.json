@@ -1,0 +1,5 @@
+{
+    "name": "slim-spa-example",
+    "private": true,
+    "type": "module"
+}

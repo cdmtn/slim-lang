@@ -1,5 +1,5 @@
 import { CLIENT_RUNTIME } from "./client.js";
-import { Signal } from "./reactive.js";
+import { Owner, Signal, batch, cleanupOf, getOwner, onCleanup, runWithOwner } from "./reactive.js";
 
 const VOID_ELEMENTS = new Set([
 	"area", "base", "br", "col", "embed", "hr", "img", "input",
@@ -36,19 +36,51 @@ export class SafeHtml {
 	}
 }
 
-export function raw(html) {
-	return html instanceof SafeHtml ? html : new SafeHtml(html == null ? "" : String(html));
+function collectHtml(build) {
+	const outer = parking;
+	parking = null;
+	try {
+		const safe = new SafeHtml(build());
+		if (parking) safe.parked = parking;
+		return safe;
+	} finally {
+		parking = outer;
+	}
 }
+
+export function raw(html, options) {
+	const safe = Array.isArray(html)
+		? collectHtml(() => html.map(item => typeof item === "string" ? item : stringifyChild(item)).join(""))
+		: html instanceof SafeHtml ? html : new SafeHtml(html == null ? "" : String(html));
+	if (!options?.fresh) return safe;
+	const fresh = new SafeHtml(safe.value);
+	if (safe.parked) fresh.parked = safe.parked;
+	fresh.fresh = true;
+	return fresh;
+}
+
+raw.join = function (list, separator = "") {
+	return collectHtml(() => [...(list ?? [])].map(stringifyChild).join(stringifyChild(separator)));
+};
 
 const hasNativeDom =
 	typeof globalThis.document !== "undefined" &&
 	typeof globalThis.HTMLElement !== "undefined";
 
-const { document: slimDocument, HTMLElement } = hasNativeDom
-	? globalThis
-	: (await import("linkedom")).parseHTML("<!doctype html><html><head></head><body></body></html>");
+function serverDom() {
+	const { createRequire } = process.getBuiltinModule("node:module");
+	return createRequire(import.meta.url)("linkedom").parseHTML("<!doctype html><html><head></head><body></body></html>");
+}
+
+const { document: slimDocument, HTMLElement } = hasNativeDom ? globalThis : serverDom();
 
 export { slimDocument, HTMLElement };
+
+let hydrateElement = null;
+
+export function setHydrate(fn) {
+	hydrateElement = fn;
+}
 
 export class VNode {
 	constructor(fields) {
@@ -65,8 +97,10 @@ export class VNode {
 	}
 }
 
-function element(tag, attrs, children) {
-	return new VNode({ type: "element", tag, attrs, children });
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+function element(tag, attrs, children, written = tag) {
+	return new VNode({ type: "element", tag, written, attrs, children });
 }
 function textNode(value) {
 	return new VNode({ type: "text", value });
@@ -187,10 +221,11 @@ function parseNodes(html) {
 			if (isNameStart(html[i + 1])) {
 				let j = i + 1;
 				while (j < len && isNameChar(html[j])) j++;
-				const tag = html.slice(i + 1, j).toLowerCase();
+				const written = html.slice(i + 1, j);
+				const tag = written.toLowerCase();
 
 				const { attrs, selfClosing, end } = parseAttributes(html, j);
-				const el = element(tag, attrs, []);
+				const el = element(tag, attrs, [], written);
 				top().children.push(el);
 				i = end;
 
@@ -225,11 +260,18 @@ function escapeAttribute(value) {
 	return String(value).replace(/[&"]/g, ch => ESCAPES[ch]);
 }
 
+const SPELLED_BOOLEANS = new Set(["draggable", "spellcheck", "contenteditable"]);
+
+export function spellsBoolean(name) {
+	return name.startsWith("data-") || name.startsWith("aria-") || SPELLED_BOOLEANS.has(name);
+}
+
 function renderAttributes(attrs) {
 	let out = "";
 	for (const key in attrs) {
 		const value = attrs[key];
-		if (value === true) out += ` ${key}`;
+		if (typeof value === "boolean" && spellsBoolean(key)) out += ` ${key}="${value}"`;
+		else if (value === true) out += ` ${key}`;
 		else if (value === false || value == null) continue;
 		else out += ` ${key}="${escapeAttribute(value)}"`;
 	}
@@ -263,7 +305,7 @@ export function renderVNode(node, rawText = false) {
 	}
 }
 
-export function vnodeToElement(node, doc = slimDocument) {
+export function vnodeToElement(node, doc = slimDocument, namespace = null) {
 	if (node == null) return doc.createTextNode("");
 	if (typeof node === "string") return doc.createTextNode(node);
 	if (typeof node.nodeType === "number") return node;
@@ -277,20 +319,25 @@ export function vnodeToElement(node, doc = slimDocument) {
 			return doc.createComment(node.value ?? "");
 		case "fragment": {
 			const frag = doc.createDocumentFragment();
-			for (const child of node.children || []) frag.appendChild(vnodeToElement(child, doc));
+			for (const child of node.children || []) frag.appendChild(vnodeToElement(child, doc, namespace));
 			frag.toString = fragmentToHtml;
 			return frag;
 		}
 		case "element": {
-			const el = doc.createElement(node.tag);
+			const own = node.tag === "svg" ? SVG_NAMESPACE : namespace;
+			const el = own ? doc.createElementNS(own, node.written ?? node.tag) : doc.createElement(node.tag);
+			const inner = own && node.tag === "foreignobject" ? null : own;
 			const attrs = node.attrs || {};
 			for (const key in attrs) {
 				const value = attrs[key];
-				if (value === true) el.setAttribute(key, "");
+				if (typeof value === "boolean" && spellsBoolean(key)) el.setAttribute(key, String(value));
+				else if (value === true) el.setAttribute(key, "");
 				else if (value === false || value == null) continue;
 				else el.setAttribute(key, String(value));
 			}
-			for (const child of node.children || []) el.appendChild(vnodeToElement(child, doc));
+			for (const child of node.children || []) el.appendChild(vnodeToElement(child, doc, inner));
+			if (node.handlers) bindHandlers(el, node.handlers);
+			if (node.props) el.props = { ...(el.props ?? {}), ...node.props };
 			return el;
 		}
 		default:
@@ -305,7 +352,8 @@ function fragmentToHtml() {
 }
 
 const NODE_MARKER = "slim-node:";
-let parkedNodes = [];
+let parking = null;
+let parkedCount = 0;
 
 function isDomNode(value) {
 	return !!value && typeof value === "object" && typeof value.nodeType === "number";
@@ -313,58 +361,158 @@ function isDomNode(value) {
 
 function stringifyChild(value) {
 	if (value == null || value === false) return "";
-	if (value instanceof SafeHtml) return value.value;
+	if (value instanceof SafeHtml) {
+		if (value.parked) for (const [id, node] of value.parked) (parking ??= new Map()).set(id, node);
+		return value.value;
+	}
 	if (value instanceof VNode) return renderVNode(value);
 	if (Array.isArray(value)) return value.map(stringifyChild).join("");
-	if (isDomNode(value)) return `<!--${NODE_MARKER}${parkedNodes.push(value) - 1}-->`;
+	if (isDomNode(value)) {
+		const id = ++parkedCount;
+		(parking ??= new Map()).set(id, value);
+		return `<!--${NODE_MARKER}${id}-->`;
+	}
 	return escapeHtml(value);
 }
 
-function insideTag(html) {
-	return html.lastIndexOf("<") > html.lastIndexOf(">");
+const TEXT = 0;
+const TAG = 1;
+const DOUBLE_QUOTED = 2;
+const SINGLE_QUOTED = 3;
+const COMMENT = 4;
+
+function scanHtml(state, chunk) {
+	for (let i = 0; i < chunk.length; i++) {
+		const ch = chunk[i];
+		if (state.mode === TEXT) {
+			if (ch !== "<") continue;
+			if (chunk.startsWith("<!--", i)) {
+				state.mode = COMMENT;
+				i += 3;
+			} else if (/[A-Za-z\/!]/.test(chunk[i + 1] ?? "")) {
+				state.mode = TAG;
+				state.afterEquals = false;
+			}
+		} else if (state.mode === TAG) {
+			if (ch === ">") state.mode = TEXT;
+			else if (ch === '"') state.mode = DOUBLE_QUOTED;
+			else if (ch === "'") state.mode = SINGLE_QUOTED;
+			else if (ch === "=") state.afterEquals = true;
+			else if (!/\s/.test(ch)) state.afterEquals = false;
+		} else if (state.mode === DOUBLE_QUOTED) {
+			if (ch === '"') {
+				state.mode = TAG;
+				state.afterEquals = false;
+			}
+		} else if (state.mode === SINGLE_QUOTED) {
+			if (ch === "'") {
+				state.mode = TAG;
+				state.afterEquals = false;
+			}
+		} else if (chunk.startsWith("-->", i)) {
+			state.mode = TEXT;
+			i += 2;
+		}
+	}
+	return state;
 }
 
-function reviveParked(node) {
+function attributeText(value) {
+	if (value == null || value === false) return "";
+	if (Array.isArray(value)) return value.map(attributeText).join("");
+	return escapeHtml(value instanceof SafeHtml ? value.value : value);
+}
+
+function attributeNames(value) {
+	return attributeText(value)
+		.split(/\s+/)
+		.filter(name => /^[A-Za-z_:][\w:.-]*$/.test(name) && !/^on/i.test(name))
+		.join(" ");
+}
+
+function inertAttributeText(value) {
+	return attributeText(value).replace(/[\s=`]/g, ch => `&#${ch.charCodeAt(0)};`);
+}
+
+function reviveParked(node, parked) {
 	if (!node || typeof node !== "object" || isDomNode(node)) return node;
 
 	if (node.type === "comment" && typeof node.value === "string" && node.value.startsWith(NODE_MARKER)) {
-		return parkedNodes[Number(node.value.slice(NODE_MARKER.length))] ?? node;
+		return parked.get(Number(node.value.slice(NODE_MARKER.length))) ?? node;
 	}
 
-	if (node.children) node.children = node.children.map(reviveParked);
+	if (node.type === "element" && node.attrs) {
+		for (const key of Object.keys(node.attrs)) {
+			const value = node.attrs[key];
+			if (key.startsWith(HANDLER_ATTRIBUTE)) {
+				const entry = parked.get("on" + value);
+				if (!entry) continue;
+				(node.handlers ??= []).push(entry);
+				delete node.attrs[key];
+			} else if (typeof value === "string" && value.startsWith(PROP_MARKER) && parked.has(value)) {
+				const prop = parked.get(value);
+				if (key === "props") node.props = { ...node.props, ...prop };
+				else (node.props ??= {})[camelName(key)] = prop;
+				delete node.attrs[key];
+			}
+		}
+	}
+
+	if (node.children) node.children = node.children.map(child => reviveParked(child, parked));
 	return node;
 }
 
-let eventHandlers = [];
+const HANDLER_ATTRIBUTE = "data-slim-on-";
+const PROP_MARKER = "slim-prop:";
 
-function registerEventHandler(event, fn) {
-	const id = eventHandlers.length;
-	eventHandlers.push({ event, source: fn.toString(), fn });
+function camelName(name) {
+	return name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+let eventHandlers = new Map();
+let handlerCount = 0;
+let propCount = 0;
+
+function registerEventHandler(event, fn, modifiers) {
+	const id = ++handlerCount;
+	const options = modifiers.length ? Object.fromEntries(modifiers.map(modifier => [modifier, true])) : undefined;
+	const entry = { id, event, source: fn.toString(), fn, options };
+	eventHandlers.set(id, entry);
+	(parking ??= new Map()).set("on" + id, entry);
 	return id;
+}
+
+function bindHandlers(el, handlers) {
+	for (const entry of handlers) {
+		eventHandlers.delete(entry.id);
+		el.addEventListener(entry.event, function (e) {
+			return batch(() => entry.fn.call(this, e));
+		}, entry.options);
+	}
 }
 
 const boundEvents = new Set();
 
 export function __bind_events__() {
-	for (const { event } of eventHandlers) {
+	for (const { event } of eventHandlers.values()) {
 		if (boundEvents.has(event)) continue;
 		boundEvents.add(event);
 		document.addEventListener(event, e => {
-			const el = e.target.closest(`[data-slim-on-${event}]`);
+			const el = e.target?.closest?.(`[${HANDLER_ATTRIBUTE}${event}]`);
 			if (!el) return;
-			const entry = eventHandlers[el.getAttribute(`data-slim-on-${event}`)];
-			if (entry && entry.fn) entry.fn.call(el, e);
-		});
+			const entry = eventHandlers.get(Number(el.getAttribute(`${HANDLER_ATTRIBUTE}${event}`)));
+			if (entry && entry.fn) batch(() => entry.fn.call(el, e));
+		}, true);
 	}
 }
 
 export function __flush_events__() {
-	if (eventHandlers.length === 0) return "";
+	if (eventHandlers.size === 0) return "";
 
-	const handlers = eventHandlers;
-	eventHandlers = [];
+	const handlers = [...eventHandlers.values()];
+	eventHandlers = new Map();
 
-	const table = handlers.map((h, i) => `${i}:${h.source}`).join(",");
+	const table = handlers.map(h => `${h.id}:${h.source}`).join(",");
 	const events = [...new Set(handlers.map(h => h.event))];
 
 	const runtime = CLIENT_RUNTIME.map(fn => fn.toString()).join("\n");
@@ -378,57 +526,283 @@ export function __flush_events__() {
 		`var el=e.target.closest("[data-slim-on-"+evt+"]");` +
 		`if(el){var id=el.getAttribute("data-slim-on-"+evt);` +
 		`if(H[id])H[id].call(el,e);}` +
-		`});` +
+		`},true);` +
 		`});` +
 		`})();`;
 
 	return script.replace(/<\/script/gi, "<\\/script");
 }
 
-const __lifecycleRecords__ = new Set();
-let __lifecycleObserver__ = null;
+class WeakItems {
+	constructor() {
+		this.refs = new Set();
+		this.byItem = new WeakMap();
+	}
 
-function __ensureLifecycleObserver__() {
-	if (__lifecycleObserver__) return true;
-	if (typeof MutationObserver === "undefined" || typeof document === "undefined") return false;
+	get size() {
+		return this.refs.size;
+	}
 
-	__lifecycleObserver__ = new MutationObserver(() => {
-		for (const r of [...__lifecycleRecords__]) {
-			const connected = r.el.isConnected;
-			if (connected && !r.connected) {
-				r.connected = true;
-				for (const fn of r.connectFns) fn(r.el);
-				if (!r.unmountFns.length) __lifecycleRecords__.delete(r);
-			} else if (!connected && r.connected) {
-				__lifecycleRecords__.delete(r);
-				for (const fn of r.unmountFns) fn(r.el);
-			}
+	add(item) {
+		if (this.byItem.has(item)) return;
+		const ref = typeof WeakRef === "function" ? new WeakRef(item) : { deref: () => item };
+		this.byItem.set(item, ref);
+		this.refs.add(ref);
+	}
+
+	delete(item) {
+		const ref = this.byItem.get(item);
+		if (!ref) return;
+		this.byItem.delete(item);
+		this.refs.delete(ref);
+	}
+
+	values() {
+		const items = [];
+		for (const ref of this.refs) {
+			const item = ref.deref();
+			if (item) items.push(item);
+			else this.refs.delete(ref);
 		}
+		return items;
+	}
+}
+
+const attachedLives = new WeakItems();
+const waitingLives = new WeakItems();
+const parkedNodes = new WeakSet();
+let lifeObserver = null;
+
+function isHeld(node) {
+	let top = node;
+	for (let current = node; current; current = current.parentNode) {
+		if (parkedNodes.has(current)) return true;
+		const life = current === node ? null : current.__slim_life__;
+		if (life && life.kept && !life.done) return true;
+		top = current;
+	}
+	if (top.nodeType === 11) for (const child of top.childNodes) if (parkedNodes.has(child)) return true;
+	return false;
+}
+
+function releaseInside(root, except = null) {
+	for (const life of attachedLives.values()) {
+		if (life === except || life.node.isConnected) continue;
+		if (root === life.node || root.contains?.(life.node)) {
+			life.kept = false;
+			life.detach();
+		}
+	}
+	for (const el of root.querySelectorAll?.("*") ?? []) {
+		const life = el.__slim_life__;
+		if (!life || life === except || life.done || el.isConnected) continue;
+		life.kept = false;
+		if (life.connected) life.detach();
+		else life.finish();
+	}
+}
+
+export function __park__(nodes) {
+	for (const node of nodes) parkedNodes.add(node);
+}
+
+export function __unpark__(nodes) {
+	for (const node of nodes) parkedNodes.delete(node);
+}
+
+export function __release__(nodes) {
+	__unpark__(nodes);
+	for (const node of nodes) releaseInside(node);
+}
+
+function observeLives() {
+	if (lifeObserver) return true;
+	if (typeof MutationObserver === "undefined" || typeof document === "undefined" || !document.documentElement) return false;
+
+	lifeObserver = new MutationObserver(mutations => {
+		let added = false;
+		let removed = false;
+		for (const mutation of mutations) {
+			if (mutation.addedNodes.length) added = true;
+			if (mutation.removedNodes.length) removed = true;
+		}
+		if (removed) for (const life of attachedLives.values()) if (!life.node.isConnected && !isHeld(life.node)) life.detach();
+		if (added) for (const life of waitingLives.values()) if (life.node.isConnected) life.attach();
 	});
-	__lifecycleObserver__.observe(document.documentElement, { childList: true, subtree: true });
+	lifeObserver.observe(document.documentElement, { childList: true, subtree: true });
 	return true;
 }
 
+class Life {
+	constructor(el, connects, unmounts, owner, observed) {
+		this.el = el;
+		this.node = el.nodeType === 11 ? (el.lastChild ?? el) : el;
+		this.connects = connects;
+		this.unmounts = unmounts;
+		this.owner = owner;
+		this.observed = observed;
+		this.connected = false;
+		this.kept = false;
+		this.done = false;
+	}
+
+	busy() {
+		return this.kept || this.connects.length > 0 || this.unmounts.length > 0 || !!this.owner?.owned || !!this.owner?.cleanups;
+	}
+
+	track() {
+		if (!this.observed || this.done) return;
+		if (this.connected) attachedLives.add(this);
+		else waitingLives.add(this);
+	}
+
+	attach() {
+		if (this.done || this.connected) return;
+		this.connected = true;
+		waitingLives.delete(this);
+		if (this.observed) attachedLives.add(this);
+		for (const fn of this.connects) fn(this.el);
+	}
+
+	detach() {
+		if (this.done || !this.connected) return;
+		this.connected = false;
+		attachedLives.delete(this);
+		for (const fn of this.unmounts) fn(this.el);
+		if (this.kept) this.track();
+		else this.finish();
+	}
+
+	finish() {
+		if (this.done) return;
+		this.done = true;
+		attachedLives.delete(this);
+		waitingLives.delete(this);
+		this.owner?.dispose();
+	}
+
+	connect(fn) {
+		this.connects.push(fn);
+		if (this.connected) fn(this.el);
+		else this.track();
+	}
+
+	unmount(fn) {
+		this.unmounts.push(fn);
+		this.track();
+	}
+
+	keep() {
+		this.kept = true;
+		this.track();
+	}
+}
+
 export function __lifecycle__(el, connectFns, unmountFns) {
-	if ((!connectFns || !connectFns.length) && (!unmountFns || !unmountFns.length)) return;
-
-	connectFns = connectFns || [];
-	unmountFns = unmountFns || [];
-
-	const r = { el, connectFns, unmountFns, connected: false };
-
-	if (el.isConnected) {
-		r.connected = true;
-		for (const fn of connectFns) fn(el);
-		if (!unmountFns.length) return;
+	const life = new Life(el, connectFns || [], unmountFns || [], getOwner(), true);
+	if (!el || typeof el.nodeType !== "number") {
+		life.observed = false;
+		return life;
 	}
-
-	if (!__ensureLifecycleObserver__()) {
-		if (!r.connected) for (const fn of connectFns) fn(el);
-		return;
+	el.__slim_life__ = life;
+	if (life.node !== el) life.node.__slim_life__ = life;
+	if (!observeLives()) {
+		life.observed = false;
+		life.connected = true;
+		for (const fn of life.connects) fn(el);
+		return life;
 	}
+	if (life.node.isConnected) {
+		life.connected = true;
+		for (const fn of life.connects) fn(el);
+	}
+	if (life.busy()) life.track();
+	return life;
+}
 
-	__lifecycleRecords__.add(r);
+function lifeOf(node) {
+	return node?.__slim_life__ ?? null;
+}
+
+export function dispose(node) {
+	const life = lifeOf(node);
+	if (!life) return;
+	if (life.connected || life.node.isConnected) {
+		life.connected = true;
+		life.kept = false;
+		life.detach();
+	} else {
+		life.finish();
+	}
+	if (!node.isConnected) releaseInside(node, life);
+}
+
+export function onRemove(node, fn) {
+	let active = true;
+	const life = new Life(node, [], [() => { if (active) fn(node); }], null, true);
+	if (!observeLives()) return () => { active = false; };
+	const watchers = node.__slim_removals__ ??= new Set();
+	watchers.add(life);
+	life.connected = node.isConnected;
+	life.track();
+	return () => {
+		active = false;
+		watchers.delete(life);
+		life.finish();
+	};
+}
+
+function addListener(owner, target, event, fn, options) {
+	const handler = function (e) { return batch(() => fn.call(this, e)); };
+	target.addEventListener(event, handler, options);
+	const stop = () => target.removeEventListener(event, handler, options);
+	if (owner) cleanupOf(owner, stop);
+	return stop;
+}
+
+export function listen(target, event, fn, options) {
+	return addListener(getOwner(), target, event, fn, options);
+}
+
+export function __listener__(lifeOf = null) {
+	const owner = getOwner();
+	return (target, event, fn, options) => {
+		const stop = addListener(owner, target, event, fn, options);
+		lifeOf?.()?.track();
+		return stop;
+	};
+}
+
+export function setHtml(el, markup) {
+	const node = vnodeToElement(htmlToVdom(markup), el.ownerDocument ?? slimDocument);
+	el.replaceChildren(node);
+	upgrade(el);
+	return el;
+}
+
+const rendered = new WeakMap();
+
+export function render(view, target) {
+	rendered.get(target)?.();
+	let node = null;
+	const owner = new Owner(null);
+	runWithOwner(owner, () => {
+		node = typeof view === "function" && !view.__component__ ? view() : typeof view === "function" ? view({}) : view;
+	});
+	const shown = node == null ? null : typeof node.nodeType === "number" ? node : vnodeToElement(htmlToVdom(node));
+	const nodes = shown == null ? [] : shown.nodeType === 11 ? [...shown.childNodes] : [shown];
+	target.replaceChildren(...nodes);
+	const stop = () => {
+		if (rendered.get(target) !== stop) return;
+		rendered.delete(target);
+		for (const child of nodes) {
+			dispose(child);
+			if (child.parentNode === target) target.removeChild(child);
+		}
+		owner.dispose();
+	};
+	rendered.set(target, stop);
+	return stop;
 }
 
 export function __create_host__(tag) {
@@ -437,6 +811,7 @@ export function __create_host__(tag) {
 }
 
 export function __adopt_into__(host, el) {
+	if (el === host) return;
 	if (el.nodeType === 11) {
 		for (const child of [...el.childNodes]) if (child.parentNode !== host) host.appendChild(child);
 		return;
@@ -457,6 +832,62 @@ function liveProps(signal) {
 	});
 }
 
+const pendingElements = new WeakItems();
+let attributeObserver = null;
+
+function watchAttributes(el) {
+	if (typeof MutationObserver === "undefined") return;
+	attributeObserver ??= new MutationObserver(records => {
+		const seen = new Set();
+		for (const { target } of records) {
+			if (seen.has(target)) continue;
+			seen.add(target);
+			if (target.__slim_life__ && !target.__slim_life__.done) target.__slim_signal__.v = target.__slim_props__();
+		}
+	});
+	attributeObserver.observe(el, { attributes: true });
+}
+const definedTags = new Set();
+
+function meaningful(nodes) {
+	return nodes.some(node => node.nodeType === 1 || (node.nodeType === 3 && node.data.trim() !== ""));
+}
+
+export function upgrade(root) {
+	if (!root) return root;
+	if (typeof customElements !== "undefined" && typeof customElements.upgrade === "function") {
+		if (root.nodeType === 1) customElements.upgrade(root);
+		else if (root.nodeType === 11) for (const child of root.children ?? []) customElements.upgrade(child);
+	}
+	if (pendingElements.size === 0) return root;
+	let found = true;
+	while (found) {
+		found = false;
+		for (const el of pendingElements.values()) {
+			if (el !== root && !(typeof root.contains === "function" && root.contains(el))) continue;
+			found = true;
+			el.__slim_render__();
+		}
+	}
+	return root;
+}
+
+export const __upgrade__ = upgrade;
+
+export function __element_host__(tag, props) {
+	if (!definedTags.has(tag)) return null;
+	const doc = typeof document !== "undefined" ? document : slimDocument;
+	const host = doc.createElement(tag);
+	host.props = props;
+	return host;
+}
+
+export function __element_life__(host, connects, unmounts) {
+	const life = new Life(host, connects, unmounts, getOwner(), false);
+	host.__slim_life__ = life;
+	return life;
+}
+
 export function __define_element__(tag, factory) {
 	if (typeof customElements === "undefined" || !hasNativeDom) return;
 	if (customElements.get(tag)) return;
@@ -464,15 +895,18 @@ export function __define_element__(tag, factory) {
 	customElements.define(tag, class extends HTMLElement {
 		constructor() {
 			super();
-			this.__slim__ = null;
+			this.__slim_life__ = null;
 			this.__props__ = null;
 			this.__slim_signal__ = null;
+			this.__slim_children__ = null;
+			this.__slim_watched__ = false;
 
 			if (Object.prototype.hasOwnProperty.call(this, "props")) {
 				const pending = this.props;
 				delete this.props;
-				this.props = pending;
+				this.__props__ = pending ?? {};
 			}
+			pendingElements.add(this);
 		}
 
 		get props() {
@@ -481,7 +915,9 @@ export function __define_element__(tag, factory) {
 
 		set props(value) {
 			this.__props__ = value ?? {};
-			if (this.__slim_signal__) this.__slim_signal__.v = this.__slim_props__();
+			const life = this.__slim_life__;
+			if (life && !life.done) this.__slim_signal__.v = this.__slim_props__();
+			else if (!life && !this.hasAttribute("hydrate")) this.__slim_render__();
 		}
 
 		__slim_props__() {
@@ -497,59 +933,112 @@ export function __define_element__(tag, factory) {
 				if (key) fromAttributes[key] = attribute.value;
 			}
 
-			return { ...fromAttributes, ...this.__props__ };
+			const children = this.__slim_children__ && meaningful(this.__slim_children__) ? { children: this.__slim_children__ } : {};
+			return { ...fromAttributes, ...children, ...this.__props__ };
 		}
 
 		__slim_render__() {
+			pendingElements.delete(this);
+			const hydrate = hydrateElement ?? globalThis.hydrate;
+			const hydrating = this.hasAttribute("hydrate") && typeof hydrate === "function";
+			if (!hydrating && this.__slim_children__ === null) this.__slim_children__ = [...this.childNodes];
 			const signal = this.__slim_signal__ = new Signal(this.__slim_props__());
-			if (this.hasAttribute("hydrate") && typeof globalThis.hydrate === "function") {
-				this.__slim__ = globalThis.hydrate(() => factory(liveProps(signal), this), this);
+			if (hydrating) {
+				this.__slim_life__ = hydrate(() => factory(liveProps(signal), this), this);
 			} else {
 				this.replaceChildren();
-				this.__slim__ = factory(liveProps(signal), this);
+				this.__slim_life__ = factory(liveProps(signal), this);
 			}
+			if (this.hasAttribute("keep-alive")) this.__slim_life__?.keep?.();
 
-			if (typeof MutationObserver !== "undefined") {
-				new MutationObserver(() => { signal.v = this.__slim_props__(); })
-					.observe(this, { attributes: true });
+			if (!this.__slim_watched__) {
+				this.__slim_watched__ = true;
+				watchAttributes(this);
 			}
 		}
 
 		connectedCallback() {
-			if (!this.__slim__) this.__slim_render__();
-			for (const fn of this.__slim__?.connects ?? []) fn(this);
+			if (!this.__slim_life__ || this.__slim_life__.done) this.__slim_render__();
+			this.__slim_life__?.attach?.();
 		}
 
 		disconnectedCallback() {
-			for (const fn of this.__slim__?.unmounts ?? []) fn(this);
+			queueMicrotask(() => {
+				if (!this.isConnected && !isHeld(this)) this.__slim_life__?.detach?.();
+			});
 		}
 	});
+	definedTags.add(tag);
 }
 
 export function __html__(strings, ...values) {
+	const outer = parking;
+	parking = null;
+	try {
+		const safe = new SafeHtml(buildHtml(strings, values));
+		if (parking) safe.parked = parking;
+		return safe;
+	} finally {
+		parking = outer;
+	}
+}
+
+function openTag(out) {
+	return out.slice(out.lastIndexOf("<") + 1).match(/^[A-Za-z][\w.-]*/)?.[0] ?? "";
+}
+
+function isPropValue(value) {
+	if (typeof value === "function") return true;
+	if (!value || typeof value !== "object" || value instanceof SafeHtml) return false;
+	return !Array.isArray(value) || value.some(item => item !== null && typeof item === "object" && !(item instanceof SafeHtml));
+}
+
+function buildHtml(strings, values) {
 	let out = strings[0];
+	const state = scanHtml({ mode: TEXT, afterEquals: false }, strings[0]);
 
 	for (let i = 0; i < values.length; i++) {
 		const value = values[i];
-		const eventMatch = out.match(/\son([A-Z][A-Za-z]*)=\s*$/);
+		const chunk = strings[i];
+		const eventMatch = state.mode === TAG && state.afterEquals ? chunk.match(/\son([A-Z][A-Za-z]*)((?::[a-z]+)*)=\s*$/) : null;
 
 		if (eventMatch) {
-			out = out.slice(0, eventMatch.index);
+			out = out.slice(0, out.length - chunk.length + eventMatch.index);
 			if (typeof value === "function") {
 				const event = eventMatch[1].toLowerCase();
-				const id = registerEventHandler(event, value);
-				out += ` data-slim-on-${event}="${id}"`;
+				const id = registerEventHandler(event, value, eventMatch[2].split(":").filter(Boolean));
+				out += ` ${HANDLER_ATTRIBUTE}${event}="${id}"`;
 			}
-		} else if (insideTag(out) && /=\s*$/.test(out)) {
-			out += `"${escapeHtml(value instanceof SafeHtml ? value.value : value ?? "")}"`;
+		} else if (state.mode === TAG && state.afterEquals && isPropValue(value) && openTag(out).includes("-")) {
+			const marker = PROP_MARKER + ++propCount;
+			(parking ??= new Map()).set(marker, value);
+			out += `"${marker}"`;
+		} else if (state.mode === TAG && state.afterEquals) {
+			out += `"${attributeText(value)}"`;
+		} else if (state.mode === TAG) {
+			out += /\s$/.test(out) ? attributeNames(value) : inertAttributeText(value);
+		} else if (state.mode === DOUBLE_QUOTED || state.mode === SINGLE_QUOTED) {
+			out += attributeText(value);
+		} else if (state.mode === TEXT && /<\/?$/.test(out)) {
+			const name = value == null || value === false ? "" : String(value);
+			if (!/^[A-Za-z][\w.:-]*$/.test(name)) throw new Error(`"${name}" is not a tag name: a dynamic tag outside a component takes a tag name`);
+			out += name;
+			if (!out.endsWith("</" + name)) {
+				state.mode = TAG;
+				state.afterEquals = false;
+			}
+		} else if (state.mode === COMMENT) {
+			out += attributeText(value).replace(/--/g, "&#45;&#45;");
 		} else {
 			out += stringifyChild(value);
 		}
 
+		state.afterEquals = false;
 		out += strings[i + 1];
+		scanHtml(state, strings[i + 1]);
 	}
 
-	return new SafeHtml(out);
+	return out;
 }
 
 export function __resolve_bem__(vnode, scope = "") {
@@ -579,8 +1068,8 @@ export function htmlToVdom(input) {
 	if (input instanceof VNode) return input;
 
 	const html = input == null ? "" : input instanceof SafeHtml ? input.value : String(input);
-	const nodes = parseNodes(html).map(reviveParked);
-	parkedNodes = [];
+	const parked = input instanceof SafeHtml ? input.parked : null;
+	const nodes = parked ? parseNodes(html).map(node => reviveParked(node, parked)) : parseNodes(html);
 
 	const meaningful = nodes.filter(n => !(n.type === "text" && n.value.trim() === ""));
 

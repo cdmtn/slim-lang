@@ -5,17 +5,19 @@ import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__helper_tests__")
+const outputDir = outputFolder("__helper_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
+const testing = pathToFileURL(path.join(root, "src", "external", "testing.js")).href
 
 function runSlim(name, source) {
     mkdirSync(outputDir, { recursive: true })
-    const { code } = transform(source, path.join(root, "__helper_tests__", `${name}.slim`))
+    const { code } = transform(source, path.join(root, "__helper_tests__", `${name}.slim`), { test: true })
     const executable = code.replace(
         /^import\s+[^;]*(?:defaults|core)\.js";$/m,
-        `import ${JSON.stringify(runtimeImport)};`
+        `import ${JSON.stringify(runtimeImport)};\nimport ${JSON.stringify(testing)};`
     )
     const outputFile = path.join(outputDir, `${name}.js`)
     writeFileSync(outputFile, executable)

@@ -100,6 +100,6 @@ test("generic struct arguments and nested struct literals are compared", () => {
 })
 
 test("TypeScript-only type syntax is rejected with a hint", () => {
-    assert.throws(() => transform(`let o: { a: int } = { a: 1 }`, "ts.slim"), /declare a struct instead/)
-    assert.throws(() => transform(`let k: keyof User = "a"`, "ts.slim"), /"keyof" types are not supported/)
+    assert.throws(() => transform(`let o: { run(): int } = null`, "ts.slim"), /holds fields only/)
+    assert.throws(() => transform(`let k: { [K in "a"]: int } = { a: 1 }`, "ts.slim"), /mapped types are not supported/)
 })

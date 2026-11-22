@@ -1,9 +1,0 @@
-export type nonZero(v) {
-    return (kindof v == "int" or kindof v == "float") && v != 0
-}
-export type even(v) {
-    return kindof v == "int" && v % 2 == 0
-}
-export type odd(v) {
-    return kindof v == "int" && v % 2 != 0
-}

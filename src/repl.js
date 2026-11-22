@@ -3,14 +3,21 @@ import vm from "node:vm"
 import { preprocess } from "./syntax/index.js"
 import "./external/defaults.js"
 
+function isIncomplete(err, source) {
+    if (!(err instanceof SyntaxError)) return false
+    if (/\b(Unclosed|Unterminated|Unexpected end)\b|is not closed/.test(err.message)) return true
+    return typeof err.pos === "number" && err.pos >= source.length
+}
+
 function slimEval(cmd, context, filename, callback) {
     const source = cmd.trim()
     if (!source) return callback(null, undefined)
 
     let code
     try {
-        code = preprocess(source, "repl").code
+        code = preprocess(source, "repl", { script: true }).code
     } catch (err) {
+        if (isIncomplete(err, source)) return callback(new repl.Recoverable(err))
         return callback(err)
     }
 

@@ -19,8 +19,8 @@ log(kindof 1.5) // float
 const a = { name: "John" }
 lock a;
 
-a.name = "Arthur" // Error
+try { Object.assign(a, { name: "Arthur" }) } catch (e) { log(e.message) } // Cannot assign to read only property 'name'
 
 
 lock const b = { name: "John" }
-b.name = "Mike" // Error
+try { Object.assign(b, { name: "Mike" }) } catch (e) { log(e.message) } // locked object mutation

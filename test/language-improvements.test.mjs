@@ -7,9 +7,10 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { transform } from "../src/transform.js"
 import { closest } from "../src/suggest.js"
+import { outputFolder } from "./output.mjs"
 
 const root = process.cwd()
-const outputDir = path.join(root, "dist", "__improvement_tests__")
+const outputDir = outputFolder("__improvement_tests__")
 const runtimeImport = pathToFileURL(path.join(root, "src", "external", "defaults.js")).href
 
 function run(name, source) {

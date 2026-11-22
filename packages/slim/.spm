@@ -1,7 +1,0 @@
-name = "slim"
-description = "Slim Standart Library"
-version = "1.0.0"
-
-@ github
-	organization = "true"
-	repo = "spm-libs/std"

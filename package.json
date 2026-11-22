@@ -1,9 +1,31 @@
 {
 	"name": "@slim-lang/core",
-	"version": "1.2.15",
+	"version": "1.2.19",
 	"description": "Slim extends JavaScript with runtime types, structs, operators, and components, compiling to plain Javascript",
-	"main": "index.js",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js",
+		"./esbuild": "./src/esbuild.js",
+		"./package.json": "./package.json"
+	},
 	"type": "module",
+	"sideEffects": [
+		"./run-dev-slim.js",
+		"./run-slim.js",
+		"./src/*.js",
+		"./src/bin/**",
+		"./src/checker/**",
+		"./src/handlers/**",
+		"./src/reactivity/**",
+		"./src/syntax/**",
+		"./src/transform/**",
+		"./src/external/core.js",
+		"./src/external/defaults.js",
+		"./src/external/testing.js"
+	],
+	"engines": {
+		"node": ">=22.12.0"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cdmtn/slim-lang.git"
@@ -15,18 +37,16 @@
 		"release:patch": "npm version patch && git push --follow-tags && npm publish",
 		"release:minor": "npm version minor && git push --follow-tags && npm publish",
 		"release:major": "npm version major && git push --follow-tags && npm publish",
-		"test": "node --test"
+		"test": "node --test test/*.test.mjs"
 	},
 	"files": [
-		"packages",
 		"src",
 		"run-dev-slim.js",
 		"run-slim.js",
 		"README.md"
 	],
 	"bin": {
-		"slmc": "./src/bin/cli.js",
-		"spm": "./src/bin/spm.js"
+		"slmc": "./src/bin/cli.js"
 	},
 	"keywords": [],
 	"author": "",
@@ -36,16 +56,13 @@
 		"@babel/parser": "7.29.7",
 		"@babel/traverse": "^7.29.7",
 		"@babel/types": "^7.29.7",
-		"chalk": "^6.0.0",
 		"chokidar": "^5.0.0",
 		"commander": "^15.0.0",
-		"keytar": "^7.9.0",
-		"linkedom": "^0.18.13",
-		"open": "^11.0.1",
-		"tar": "^7.5.22"
+		"linkedom": "^0.18.13"
 	},
 	"devDependencies": {
 		"@babel/plugin-transform-typescript": "^7.29.7",
+		"esbuild": "^0.28.2",
 		"typescript": "^5.9.3"
 	}
 }

@@ -1,4 +1,4 @@
-let readSource = null
+let readSource = file => globalThis.process?.getBuiltinModule?.("node:fs")?.readFileSync(file, "utf8")
 
 export function setSourceReader(reader) {
     readSource = typeof reader === "function" ? reader : null
@@ -40,6 +40,7 @@ function isInternalFrame(normalized) {
         normalized.includes("/src/handlers/") ||
         normalized.includes("/src/compile.js") ||
         normalized.includes("/src/transform.js") ||
+        normalized.includes("/src/transform/") ||
         normalized.includes("/src/syntax/")
     )
 }
