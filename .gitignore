@@ -8,3 +8,4 @@ local/
 todo.md
 /packages/*
 spm.lock.json
+bench/
