@@ -13,7 +13,7 @@ export function checkDetachedMethod(node, path_, definition, report) {
     if (!definition?.isClass) return
     const name = node.property.name
     const method = definition.methods.get(name)
-    if (!method?.node || definition.fields.has(name)) return
+    if (!method?.node || definition.fields.has(name) || definition.rebound?.has(name)) return
     const parent = path_.parent
     const key = path_.key
     const passed = (t.isVariableDeclarator(parent) && key === "init") || (t.isAssignmentExpression(parent) && key === "right") ||

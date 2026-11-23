@@ -383,6 +383,7 @@ export function classFor(type, env) {
     const fields = new Map()
     const methods = new Map()
     const members = new Set()
+    const rebound = new Set()
     const seen = new Set()
     const chain = []
     let open = false
@@ -398,8 +399,9 @@ export function classFor(type, env) {
         for (const [name, field] of link.fields) fields.set(name, field)
         for (const [name, method] of link.methods) methods.set(name, method)
         for (const name of link.members ?? []) members.add(name)
+        for (const name of link.rebound ?? []) rebound.add(name)
     }
-    return { label: atom.name, fields, methods, members, open, isClass: true }
+    return { label: atom.name, fields, methods, members, rebound, open, isClass: true }
 }
 
 export function classDefinitionOf(node, path_, env) {

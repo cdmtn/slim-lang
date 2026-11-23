@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { test } from "node:test"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -342,4 +342,18 @@ setTimeout(async () => {
         "false",
         "… | a0,a1 | a0,a1,a2,a3 | a0,a1,a2,a3,a4,a5. | b0,b1 | c0,c1 | 1"
     ])
+})
+
+test("modules that all import each other compile without reading each other over and over", { timeout: 30000 }, () => {
+    const dir = path.join(outputDir, "cycle")
+    mkdirSync(dir, { recursive: true })
+    const count = 7
+    const others = i => Array.from({ length: count }, (_, k) => k).filter(k => k !== i)
+    for (let i = 0; i < count; i++) {
+        const uses = others(i).map(k => `use { count${k}, read${k} } from "./m${k}"`).join("\n")
+        writeFileSync(path.join(dir, `m${i}.slim`), `${uses}\nexport state count${i} = ${i}\nexport func read${i}() -> int { return count${i} }\nexport func total${i}() -> int { return ${others(i).map(k => `read${k}()`).join(" + ")} }\n`)
+    }
+    const file = path.join(dir, "m0.slim")
+    const { code } = transform(readFileSync(file, "utf8"), file, { warnings: false })
+    assert.match(code, /read1\(\)/)
 })

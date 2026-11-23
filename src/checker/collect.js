@@ -106,6 +106,7 @@ function collectClass(node, name, env) {
     const setters = new Set()
     const members = new Set()
     const statics = new Map()
+    const rebound = new Set()
     let construct = null
     let open = !!node.superClass && !t.isIdentifier(node.superClass)
     let openStatics = false
@@ -135,7 +136,10 @@ function collectClass(node, name, env) {
             const names = new Set()
             thisWrites(t.isClassMethod(member) ? member.body : member.value, names)
             if (names.open) open = true
-            for (const written of names) members.add(written)
+            for (const written of names) {
+                members.add(written)
+                rebound.add(written)
+            }
         }
         if (!t.isIdentifier(member.key)) continue
         if (t.isClassProperty(member) && member._slimField) {
@@ -156,7 +160,7 @@ function collectClass(node, name, env) {
     const parent = t.isIdentifier(node.superClass) ? node.superClass.name : null
     if (env.classDefs.has(name)) open = true
     if (env.enums.get(name)?.builtin) env.enums.delete(name)
-    env.classDefs.set(name, { fields, methods, parent, members, open, statics, openStatics, construct })
+    env.classDefs.set(name, { fields, methods, parent, members, rebound, open, statics, openStatics, construct })
 }
 
 function collectTrait(init, env) {

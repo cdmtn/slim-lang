@@ -220,6 +220,7 @@ const latestStamps = new Map()
 const partialExports = new Map()
 const cycleHits = new Set()
 const incomplete = new Set()
+const passExports = new Map()
 
 function sameExports(a, b) {
     return a.size === b.size && [...a].every(([name, kind]) => b.get(name) === kind)
@@ -238,6 +239,7 @@ export function reactiveExports(file) {
         }
         return partialExports.get(key) ?? new Map()
     }
+    if (passExports.has(key)) return passExports.get(key)
     const stamp = fileStamp(key)
     if (stamp === null) return new Map()
 
@@ -246,6 +248,7 @@ export function reactiveExports(file) {
     let stamps
     try {
         for (let round = 0; round < 8; round++) {
+            if (round > 0) passExports.clear()
             cycleHits.delete(key)
             partialExports.set(key, exports)
             stamps = new Map([[key, stamp]])
@@ -260,7 +263,10 @@ export function reactiveExports(file) {
         cycleHits.delete(key)
     }
     latestStamps.set(key, stamps)
-    if (incomplete.has(key)) incomplete.delete(key)
-    else exportsCache.set(key, { stamps, exports })
+    if (incomplete.has(key)) {
+        incomplete.delete(key)
+        passExports.set(key, exports)
+    } else exportsCache.set(key, { stamps, exports })
+    if (resolvingExports.size === 0) passExports.clear()
     return exports
 }

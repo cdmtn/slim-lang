@@ -367,6 +367,7 @@ test("class members, method results and detached methods are checked", () => {
     rejected(`${A}const s: string = new A().get()`, /"s" expects string, got int/)
     rejected(`${A}const a = new A()\nconst g = a.get\nlog(g())`, /"a\.get" loses its "this" when taken off the object/)
     rejected(`${A}const a = new A()\nconst xs = [1]\nlog(xs.map(a.get))`, /"a\.get" loses its "this"/)
+    accepted(`class Bound {\n    n: int = 0\n    constructor() { this.tick = this.tick.bind(this) }\n    later() { return [1].map(this.tick) }\n    tick() { this.n++ }\n}`)
     assert.equal(run("class-ok", `${A}class C {\n    constructor() { this.z = 3 }\n}\nclass E extends Error {}\nconst a = new A()\nconst g = a.get.bind(a)\nconst h = () => a.get()\nlog(g() + h(), new C().z, new E("m").message, typeof a.toString)`), "2 3 m function")
 })
 
