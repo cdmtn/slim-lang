@@ -27,7 +27,7 @@ A minimal config only names the entry file:
 | `uses.enabled` | `true` | Allows `use` imports. With `false`, a `use` is a build error |
 | `uses.style` | `"import"` | How `use name from "module"` is read: `"import"` makes a bare name a default import, like JavaScript; `"named"` reads it as `use { name }` |
 | `check` | `true` | Static type checking. `false` (or `slmc build --no-check`) turns it off |
-| `warnings` | `true` | Compiler warnings (unused names, unreachable code) |
+| `warnings` | `true` | Show warnings in the terminal during a build: compiler warnings (unused names, unreachable code) and build warnings such as a circular `use`. `false` hides them all; errors are always shown. `slmc init` and `slmc create --config` write it as `true` |
 | `sourceMaps` | `"inline"` | `"inline"` puts the source map in the compiled file, `"file"` writes `index.js.map` next to it, `false` leaves it out |
 | `release` | `false` | [Release mode](../15-build-and-runtime/01-release-mode.md): leave implicit runtime type checks out of the output |
 | `globals` | `[]` | Names that come from elsewhere (other scripts on the page). See [Host declarations](../14-static-checking/05-host-declarations.md) |

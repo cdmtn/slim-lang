@@ -248,3 +248,16 @@ test("slimconfig env reaches the checker", () => {
     assert.match(result.stdout + result.stderr, /"setTimeout" is not defined/)
     assert.ok(readFileSync(path.join(dir, "slimconfig.json"), "utf8").includes("embedded"))
 })
+
+test("enum is a type: any enum member or enum fits it, other values do not", () => {
+    const E = "enum Kind {\n    bot\n    user\n}\n"
+    accepted(`${E}struct Item { types?: enum }\nlog(Item.new({ types: Kind }), Item.new({ types: Kind.bot }), Item.new({}))`)
+    accepted(`${E}func f(k: Kind) -> enum { return k }\nlog(f(Kind.user))`)
+    rejected(`${E}struct Item { types: enum }\nlog(Item.new({ types: "bot" }))`, /expects enum, got string/)
+    rejected(`${E}let k: enum = 3`, /enum/)
+})
+
+test("enum as a struct field type is checked at runtime", () => {
+    const lines = runSource(`enum Kind {\n    bot\n    user\n}\nstruct Item { types?: enum }\nconst values: any[] = [Kind, Kind.user, "bot", false]\nfor (const v of values) {\n    try {\n        Item.verify({ types: v })\n        log("ok", kindof v)\n    } catch (e) {\n        log("no", kindof v)\n    }\n}`)
+    assert.deepEqual(lines, ["ok enum", "ok enum", "no string", "no bool"])
+})

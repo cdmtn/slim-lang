@@ -17,7 +17,7 @@ export const NUMERIC = new Set(["int", "float", "number"])
 
 export const KNOWN = new Set([
     "int", "float", "number", "string", "bool", "null", "undefined",
-    "object", "array", "function", "any", "element", "bigint", "symbol", "never", "Html", "SafeHtml"
+    "object", "array", "function", "any", "element", "bigint", "symbol", "never", "Html", "SafeHtml", "enum"
 ])
 
 export const HTML = named("Html")
@@ -607,6 +607,11 @@ export function acceptsAtom(target, source, env) {
     if (isArrayLike(source)) return isNamed(target, "object") || isOpen(target, env)
 
     if (isOpen(target, env) || isOpen(source, env)) return true
+
+    if (isNamed(target, "enum")) {
+        if (source.kind === "enumMember") return true
+        return (source.kind === "named" || source.kind === "generic") && (source.name === "enum" || env.enums.has(source.name))
+    }
 
     if (isNumeric(target) && isNumeric(source)) return target.name !== "int" || source.name === "int"
 

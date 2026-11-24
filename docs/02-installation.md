@@ -98,6 +98,7 @@ This creates `slimconfig.json`, sets `index` as the entry point, creates an empt
 ```json
 {
     "main": "index",
+    "warnings": true,
     "uses": {
         "style": "import",
         "enabled": true

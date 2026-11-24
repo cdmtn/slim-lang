@@ -247,7 +247,7 @@ function compileFile(slimFile) {
         const cycleStart = compiling.indexOf(depPath)
         if (cycleStart !== -1) {
             const chain = [...compiling.slice(cycleStart), depPath].map(file => path.relative(".", file))
-            console.warn(`[SLIM] Warning: circular use ${chain.join(" -> ")}`)
+            if (warnings) console.warn(`[SLIM] Warning: circular use ${chain.join(" -> ")}`)
             inCycle = true
             continue
         }
@@ -277,7 +277,7 @@ function compileFile(slimFile) {
     const { code: output, declarations: dts, warnings: found, map } = transform(code, abs, {
         jsdoc, declarations, check, release, globals, host, env: environment, autoImport: autoImportFor(abs), runtime, warnings, sourceMaps, uses: useStyle, outFile: outputPath
     })
-    if (found.length > 0) console.warn(`\n${formatDiagnostics(found)}\n`)
+    if (warnings && found.length > 0) console.warn(`\n${formatDiagnostics(found)}\n`)
 
     fs.mkdirSync(path.dirname(outputPath), { recursive: true })
     const files = [outputPath]

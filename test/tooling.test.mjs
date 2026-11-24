@@ -628,3 +628,37 @@ test("a catch-all page answers every path that no route, API or static file take
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
 })
+
+test("warnings: false in slimconfig hides every build warning, true shows them", () => {
+    const files = {
+        "main.slim": `use { b } from "./b"\nexport func a() { return 1 }\nlog(b())\n`,
+        "b.slim": `use { a } from "./main"\nexport func b() {\n    const unused = 5\n    return 2\n}\n`
+    }
+    withProject({ ...files, "slimconfig.json": JSON.stringify({ main: "main", warnings: false }) }, dir => {
+        const result = run(dir, compiler, [], { SLIM_FORCE: "1" })
+        assert.equal(result.status, 0, result.stderr)
+        assert.doesNotMatch(result.stdout + result.stderr, /Warning/)
+    })
+    withProject({ ...files, "slimconfig.json": JSON.stringify({ main: "main", warnings: true }) }, dir => {
+        const output = run(dir, compiler, [], { SLIM_FORCE: "1" })
+        const text = output.stdout + output.stderr
+        assert.match(text, /Warning: circular use/)
+        assert.match(text, /"unused" is declared but never used/)
+    })
+})
+
+test("slmc init writes warnings: true into the new slimconfig.json", () => {
+    withProject({ "package.json": "{}" }, dir => {
+        const result = run(dir, cli, ["init"])
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(JSON.parse(readFileSync(path.join(dir, "slimconfig.json"), "utf8")).warnings, true)
+    })
+})
+
+test("slmc create --config writes warnings: true into the new slimconfig.json", () => {
+    withProject({ "package.json": "{}" }, dir => {
+        const result = run(dir, cli, ["create", "--config"])
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(JSON.parse(readFileSync(path.join(dir, "slimconfig.json"), "utf8")).warnings, true)
+    })
+})

@@ -1,5 +1,6 @@
 {
     "main": "path/to/your/files",
+    "warnings": true,
     "uses": {
         "style": "import",
         "enabled": true
