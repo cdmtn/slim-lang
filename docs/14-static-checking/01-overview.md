@@ -67,7 +67,7 @@ Disable static checks for one build with `slmc build --no-check`, or in the conf
 
 ## Warnings
 
-Besides errors, the compiler prints warnings that don't stop the build: a variable, function or `use` import that is never used, code after `return`, `throw`, `break` or `continue` (inside a component it is an error), markup joined with `+` or `.join(...)`, and a call that passes a value from `state` to a function that changes its parameter. The page doesn't see a change made through a parameter: change the value through the state's own name, or give the state a new value. A variable or function whose name starts with `_` is not reported. Turn warnings off with `"warnings": false` in `slimconfig.json` (or `transform(code, file, { warnings: false })`):
+Besides errors, the compiler prints warnings that don't stop the build: a variable, function or `use` import that is never used, code after `return`, `throw`, `break` or `continue` (inside a component it is an error), markup joined with `+` or `.join(...)`, a value that may be `null` or `undefined` used without a check ([null safety](02-narrowing-and-null-safety.md#null-safety)), and a call that passes a value from `state` to a function that changes its parameter. The page doesn't see a change made through a parameter: change the value through the state's own name, or give the state a new value. A variable or function whose name starts with `_` is not reported. Turn warnings off with `"warnings": false` in `slimconfig.json` (or `transform(code, file, { warnings: false })`):
 
 ```text
 Warning: "greet" is imported but never used

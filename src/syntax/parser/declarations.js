@@ -149,6 +149,7 @@ export const slimDeclarations = superClass => class extends superClass {
 
     parseSlimType(node) {
         this.next()
+        if (this.isWord("enum")) this.slimFail(`"enum" is a reserved word and can't name a type — "enum" already is one: it accepts any enum or enum member`)
         node.id = this.parseIdentifier()
         this.checkLVal(node.id, { type: "VariableDeclarator" }, LEXICAL)
 

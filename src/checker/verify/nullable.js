@@ -5,6 +5,8 @@ import { classFor, atoms, isNamed, isNullish, sourceText, structFor } from "../c
 import { infer } from "../infer.js"
 import { hasMember, memberNames } from "./members.js"
 
+const warn = (env, node, message) => env.warn?.(node, message)
+
 export function checkNullable(node, path_, env, report, type = infer(node.object, path_, env)) {
     if (node.optional || t.isOptionalMemberExpression(node)) return false
     if (!type) return false
@@ -17,7 +19,7 @@ export function checkNullable(node, path_, env, report, type = infer(node.object
     const which = nullish.some(atom => isNamed(atom, "null")) ? "null" : "undefined"
     const shown = subject ? `"${subject}"` : "this value"
     if (nullish.length === all.length) report(node.object, `${shown} is ${which} here, so it has no properties`)
-    else report(node.object, `${shown} may be ${which} here (${formatType(type)}) — check it first or use "?."`)
+    else warn(env, node.object, `${shown} may be ${which} here (${formatType(type)}) — check it first or use "?."`)
     return true
 }
 
@@ -33,7 +35,7 @@ export function checkNullableCall(node, path_, env, report) {
     const subject = sourceText(callee)
     if (!subject) return
     const which = nullish.some(atom => isNamed(atom, "null")) ? "null" : "undefined"
-    report(callee, `"${subject}" may be ${which} here (${formatType(type)}) — check it first or call it with "?.()"`)
+    warn(env, callee, `"${subject}" may be ${which} here (${formatType(type)}) — check it first or call it with "?.()"`)
 }
 
 export function checkUnionMember(node, present, env, report) {
@@ -69,7 +71,7 @@ export function checkNotNullish(node, path_, env, report, action) {
     const subject = sourceText(node)
     const shown = subject ? `"${subject}"` : "this value"
     if (found.nullish.length === found.all.length) report(node, `${shown} is ${found.which} here, and ${found.which} ${action}`)
-    else report(node, `${shown} may be ${found.which} here (${formatType(found.type)}) — check it first: ${found.which} ${action}`)
+    else warn(env, node, `${shown} may be ${found.which} here (${formatType(found.type)}) — check it first: ${found.which} ${action}`)
     return true
 }
 
@@ -88,7 +90,9 @@ export function checkNullableConcat(node, path_, env, report) {
         if (nullish.length === 0) continue
         const which = nullish.some(atom => isNamed(atom, "null")) ? "null" : "undefined"
         const text = sourceText(side)
-        report(side, `${text ? `"${text}"` : "this value"} ${nullish.length === all.length ? "is" : "may be"} ${which} here (${formatType(type)}) — "+" would put "${which}" into the text: check it first or use ${text ?? "it"} ?? ""`)
+        const message = `${text ? `"${text}"` : "this value"} ${nullish.length === all.length ? "is" : "may be"} ${which} here (${formatType(type)}) — "+" would put "${which}" into the text: check it first or use ${text ?? "it"} ?? ""`
+        if (nullish.length === all.length) report(side, message)
+        else warn(env, side, message)
         return
     }
 }

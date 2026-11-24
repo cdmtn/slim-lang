@@ -71,7 +71,7 @@ const cache = new Map<string, int>()
 cache.set("a", "x")                 // ❌ argument "value" of "Map<string, int>.set" expects int, got string
 
 const m = "abc".match(/z/)
-log(m[0])                           // ❌ "m" may be null here (string[] | null)
+log(m[0])                           // ⚠️ "m" may be null here (string[] | null)
 ```
 
 ## Methods and indexes

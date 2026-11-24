@@ -35,6 +35,7 @@ function errors(source) {
 
 const accepted = source => assert.deepEqual(errors(source), [])
 const rejected = (source, pattern) => assert.match(errors(source).join("\n"), pattern)
+const warned = (source, pattern) => assert.match(transform(source, "interop.slim").warnings.map(diagnostic => diagnostic.message).join("\n"), pattern)
 
 test("a variable or parameter named type doesn't break typed code", () => {
     assert.equal(run("type-name", `
@@ -116,7 +117,7 @@ test("as and ! change what the checker sees", () => {
     accepted(`const a = [1].find(x => x > 0)!\nlog(a + 1)`)
     accepted(`const m = new Map<string, int>()\nconst v: int = m.get("a")!\nlog(v)`)
     accepted(`struct U { a: int }\nfunc f() -> U { return {} as U }\nf()`)
-    rejected(`const a = [1].find(x => x > 0)\nlog(a + 1)`, /may be undefined/)
+    warned(`const a = [1].find(x => x > 0)\nlog(a + 1)`, /may be undefined/)
     rejected(`const a = 1 as string\nconst n: int = a`, /expects int, got string/)
 })
 
@@ -136,7 +137,7 @@ log(size(new Uint8Array(2), new URL("http://a.b"), new WeakMap()))
 test("an optional parameter takes a value that may be undefined", () => {
     accepted(`func f(a?: string) { return a }\nfunc g(b?: string) { return f(b) }\ng()`)
     accepted(`class T { constructor(a: int, b?: string | null) {} }\nfunc g(c?: string) { return new T(1, c) }\ng()`)
-    rejected(`func f(a: string) { return a }\nfunc g(b?: string) { return f(b) }`, /expects string, got/)
+    warned(`func f(a: string) { return a }\nfunc g(b?: string) { return f(b) }`, /expects string, got/)
 })
 
 test("a default can read a name destructured before it", () => {

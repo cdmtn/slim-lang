@@ -64,6 +64,7 @@ export function checkTypes(ast, {
     }
 
     const report = diagnose("error")
+    env.warn = warnings ? diagnose("warning") : null
 
     const taken = localTypeNames(ast)
     if (host) seedHost(env, host, taken)

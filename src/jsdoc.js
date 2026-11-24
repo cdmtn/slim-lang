@@ -7,7 +7,7 @@ const traverse = _traverse.default ?? _traverse
 const PRIMITIVES = {
     int: "number", float: "number", number: "number",
     string: "string", bool: "boolean", null: "null", undefined: "undefined", void: "void",
-    any: "any", object: "object", array: "any[]",
+    any: "any", object: "object", array: "any[]", enum: "any",
     function: "Function", element: "HTMLElement",
     Html: "{ readonly value: string }", SafeHtml: "{ readonly value: string }"
 }

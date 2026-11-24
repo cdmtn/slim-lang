@@ -39,6 +39,7 @@ function errors(source) {
 
 const accepted = source => assert.deepEqual(errors(source), [], "expected no errors")
 const rejected = (source, pattern) => assert.match(errors(source).join("\n"), pattern)
+const warned = (source, pattern) => assert.match(transform(source, "safety.slim").warnings.map(diagnostic => diagnostic.message).join("\n"), pattern)
 
 function tempProject(files, config = { main: "index" }) {
     const dir = mkdtempSync(path.join(tmpdir(), "slim-safety-"))
@@ -66,8 +67,8 @@ try { f(0) } catch (e) { log(e.message) }
 
 test("a narrowing doesn't reach into a closure when the variable changes later", () => {
     const U = `struct U { name: string }\n`
-    rejected(`${U}func f(u: U?) {\n    let cur = u\n    if (cur) {\n        setTimeout(() => log(cur.name), 0)\n    }\n    cur = null\n}`, /"cur" may be null here/)
-    rejected(`${U}func f(u: U?) {\n    if (u) {\n        const run = () => { log(u.name) }\n        u = null\n        run()\n    }\n}`, /"u" may be null here/)
+    warned(`${U}func f(u: U?) {\n    let cur = u\n    if (cur) {\n        setTimeout(() => log(cur.name), 0)\n    }\n    cur = null\n}`, /"cur" may be null here/)
+    warned(`${U}func f(u: U?) {\n    if (u) {\n        const run = () => { log(u.name) }\n        u = null\n        run()\n    }\n}`, /"u" may be null here/)
     accepted(`${U}func f(u: U?, items: int[]) {\n    let cur = u\n    cur = u\n    if (cur) items.forEach(i => log(cur.name, i))\n    if (u) items.forEach(i => log(u.name))\n    if (!u) return\n    items.forEach(i => log(u.name))\n}`)
     rejected(`func f(c: bool) {\n    let x = 1\n    const g = () => { let y: int = x }\n    x = "a"\n}`, /"y" expects int, got \(int \| string\)/)
     accepted(`let api = null\nfunc setup() { api = { go: () => 1 } }\nsetup()\napi.go()`)
@@ -86,8 +87,8 @@ log(Card().outerHTML)
 
 test("calling a function that may be missing is an error", () => {
     const U = `struct U {\n    name: string\n    greet?: () => string\n}\n`
-    rejected(`${U}func f(u: U) -> string { return u.greet() }`, /"u\.greet" may be undefined here .* call it with "\?\.\(\)"/)
-    rejected(`func g(cb: (() => int)?) -> int { return cb() }`, /"cb" may be null here/)
+    warned(`${U}func f(u: U) -> string { return u.greet() }`, /"u\.greet" may be undefined here .* call it with "\?\.\(\)"/)
+    warned(`func g(cb: (() => int)?) -> int { return cb() }`, /"cb" may be null here/)
     accepted(`${U}func f(u: U) -> string {\n    if (u.greet) return u.greet()\n    return u.greet?.() ?? "none"\n}\nfunc g(cb: (() => int)?) -> int { return cb ? cb() : 0 }`)
 })
 
@@ -272,18 +273,18 @@ test("a let or const can't be used before its declaration", () => {
 
 test("null can't be iterated, spread, destructured or used in arithmetic", () => {
     const U = `struct U { name: string }\n`
-    rejected(`${U}func f(u: U?) {\n    const { name } = u\n}`, /"u" may be null here .* null can't be destructured/)
-    rejected(`func f(xs: int[]?) { log([...xs]) }`, /"xs" may be null here .* null can't be spread/)
-    rejected(`func f(xs: int[]?) { for (const x of xs) log(x) }`, /"xs" may be null here .* null can't be iterated/)
-    rejected(`func f(x: int?) -> int { return x + 1 }`, /"x" may be null here .* null in "\+" gives a wrong result/)
-    rejected(`func f(xs: (int | null)[]) -> int { return xs[0] * 2 }`, /"xs\[0\]" may be null here/)
-    rejected(`const m = "abc".match(/z/)\nlog(m[0])`, /"m" may be null here \(string\[\] \| null\)/)
+    warned(`${U}func f(u: U?) {\n    const { name } = u\n}`, /"u" may be null here .* null can't be destructured/)
+    warned(`func f(xs: int[]?) { log([...xs]) }`, /"xs" may be null here .* null can't be spread/)
+    warned(`func f(xs: int[]?) { for (const x of xs) log(x) }`, /"xs" may be null here .* null can't be iterated/)
+    warned(`func f(x: int?) -> int { return x + 1 }`, /"x" may be null here .* null in "\+" gives a wrong result/)
+    warned(`func f(xs: (int | null)[]) -> int { return xs[0] * 2 }`, /"xs\[0\]" may be null here/)
+    warned(`const m = "abc".match(/z/)\nlog(m[0])`, /"m" may be null here \(string\[\] \| null\)/)
     accepted(`func f(xs: int[]?, x: int?) -> int {\n    for (const n of xs ?? []) log(n)\n    if (x == null) return 0\n    const m = "abc".match(/b/)\n    if (m) log(m[0])\n    return x + 1\n}\nlog("a" + null)`)
 })
 
 test("optional parameters may be missing", () => {
-    rejected(`func f(name?: string) -> int { return name.length }`, /"name" may be undefined here/)
-    rejected(`func f(cb?: () => int) -> int { return cb() }`, /"cb" may be undefined here/)
+    warned(`func f(name?: string) -> int { return name.length }`, /"name" may be undefined here/)
+    warned(`func f(cb?: () => int) -> int { return cb() }`, /"cb" may be undefined here/)
     accepted(`func f(name?: string, size: int = 1) -> int { return (name?.length ?? 0) + size }`)
 })
 
@@ -322,7 +323,7 @@ test("locked objects, callbacks and Map/Set arguments are checked", () => {
     rejected(`const xs: int[] = [1, 2]\nlog(xs.map((s: string) => s.length))`, /parameter "s" is string, but it gets int here/)
     rejected(`const m = new Map<string, int>()\nm.forEach((v: string, k: string) => log(v))`, /parameter "v" is string, but it gets int here/)
     rejected(`const m = new Map<string, int>()\nm.set("a", "x")`, /argument "value" of "Map<string, int>\.set" expects int, got string/)
-    rejected(`const m = new Map<string, int>()\nlet v: int = m.get("a")`, /"v" expects int, got \(int \| undefined\)/)
+    warned(`const m = new Map<string, int>()\nlet v: int = m.get("a")`, /"v" expects int, got \(int \| undefined\)/)
     rejected(`const s = new Set<int>()\ns.add("a")`, /expects int, got string/)
     rejected(`struct C {\n    n: int\n    run() { [1].forEach(function () { log(this.n) }) }\n}`, /"this" is undefined inside a function passed to "forEach"/)
     accepted(`const cfg = { a: 1 }\ncfg.a = 2\nlock cfg\nlog(cfg.a)\nconst m = new Map<string, int[]>()\nm.set("a", [1])\nlog((m.get("a") ?? []).length);\n[1].forEach(n => log(n))`)
@@ -481,7 +482,7 @@ test("spread and rest arguments are checked", () => {
 
 test("operators that never do what was meant are errors", () => {
     rejected(`const a = 10n\nlog(a + 1)`, /"\+" can't mix bigint and number.*write 1n/)
-    rejected(`func f(s: string?) -> string { return "hi " + s }`, /"s" may be null here .* "\+" would put "null" into the text/)
+    warned(`func f(s: string?) -> string { return "hi " + s }`, /"s" may be null here .* "\+" would put "null" into the text/)
     rejected(`const s = "abc"\ns.length = 1`, /"s\.length" can't be changed/)
     rejected(`const n = 5\nif (n == NaN) log(1)`, /NaN is not equal to anything.*Number\.isNaN\(n\)/)
     rejected(`const s = "a"\nlog(s instanceof String)`, /a primitive is never an instance/)

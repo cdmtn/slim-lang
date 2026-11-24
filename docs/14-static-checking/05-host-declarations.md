@@ -76,7 +76,7 @@ global world: World
 
 mode = 2          // ❌ "mode" expects string, got int
 kit = makeKit()   // ok: every file now sees it
-kit.spawn()       // ❌ "kit" may be undefined here (Kit | undefined) — check it first or use "?."
+kit.spawn()       // ⚠️ "kit" may be undefined here (Kit | undefined) — check it first or use "?."
 world = makeWorld() // ❌ "world" is a read-only global: the host provides it, so it can't be assigned here
 ```
 

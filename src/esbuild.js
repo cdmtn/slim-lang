@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { transform } from "./transform.js"
-import { exportModuleTypes } from "./checker.js"
+import { exportModuleTypes, formatDiagnostics } from "./checker.js"
 import { projectExports } from "./autoImport.js"
 import { CORE_MODULES, PACKAGE_ROOT, distDir, getDistPath, pathKey, projectPackagesDir, projectRoot, resolveSlimSource, setProjectRoot } from "./modulePaths.js"
 
@@ -40,7 +40,7 @@ export function slimFiles(dir = projectRoot()) {
     return collectFiles(path.resolve(projectRoot(), dir), new Set([pathKey(distDir())]), new Set(), [])
 }
 
-function settingsOf({ root = process.cwd(), files = null, host = null, release = false, globals = [], autoImport = false, check = true, passes = 8, env = null } = {}) {
+function settingsOf({ root = process.cwd(), files = null, host = null, release = false, globals = [], autoImport = false, check = true, warnings = true, passes = 8, env = null } = {}) {
     const base = path.resolve(root)
     return {
         root: base,
@@ -50,6 +50,7 @@ function settingsOf({ root = process.cwd(), files = null, host = null, release =
         globals,
         autoImport,
         check,
+        warnings: warnings !== false,
         env,
         passes: Math.max(1, Math.floor(passes))
     }
@@ -148,6 +149,7 @@ function checkFiles(settings, files, sources, index) {
     const ordered = orderByImports(files, graph)
     const cycle = largestCycle(files, graph)
     const failed = new Map()
+    const warned = new Map()
     const records = new Map()
     const seen = new Map()
     const imports = file => graph.get(file) ?? []
@@ -161,13 +163,15 @@ function checkFiles(settings, files, sources, index) {
             if (reader && pass >= 2 && !stale(file)) continue
             const before = [records.get(file), failed.get(file)]
             try {
-                transform(sources.get(file), file, {
+                const { warnings } = transform(sources.get(file), file, {
                     host: settings.host, globals: settings.globals, autoImport: autoImportFor(index, file), env: settings.env,
-                    warnings: false, sourceMaps: false, test: file.endsWith(".test.slim")
+                    warnings: settings.warnings, sourceMaps: false, test: file.endsWith(".test.slim")
                 })
                 failed.delete(file)
+                warned.set(file, warnings)
             } catch (error) {
                 failed.set(file, error.message)
+                warned.set(file, error.slimWarnings ?? [])
             }
             if (reader) records.set(file, reader(file) ?? "")
             seen.set(file, imports(file).map(dependency => records.get(dependency)))
@@ -186,7 +190,10 @@ function checkFiles(settings, files, sources, index) {
         previous = signature
         if (stable >= (cycle === 0 ? 1 : cycle + 1)) break
     }
-    return ordered.filter(file => failed.has(file)).map(file => failed.get(file))
+    return {
+        errors: ordered.filter(file => failed.has(file)).map(file => failed.get(file)),
+        warnings: ordered.flatMap(file => (warned.get(file) ?? []).map(warning => formatDiagnostics([warning])))
+    }
 }
 
 function checker(settings) {
@@ -201,10 +208,10 @@ function checker(settings) {
         for (const [file, code] of sources) hash.update(`${file}\0${code}\0`)
         hash.update(JSON.stringify(index ? [...index] : null))
         const signature = hash.digest("hex")
-        if (last?.signature === signature) return { errors: last.errors, index }
-        const errors = checkFiles(settings, all, sources, index)
-        last = { signature, errors }
-        return { errors, index }
+        if (last?.signature === signature) return { ...last.result, index }
+        const result = checkFiles(settings, all, sources, index)
+        last = { signature, result }
+        return { ...result, index }
     }
 }
 
@@ -258,7 +265,7 @@ export function slim(options = {}) {
                 }
                 const result = runCheck()
                 index = result.index
-                return { errors: result.errors.map(text => ({ text })) }
+                return { errors: result.errors.map(text => ({ text })), warnings: result.warnings.map(text => ({ text })) }
             })
 
             build.onResolve({ filter: /external\/runtime-(?:core|dom)\.js$/ }, args => ({

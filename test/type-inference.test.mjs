@@ -15,6 +15,7 @@ function messages(source) {
 
 const accepted = source => assert.deepEqual(messages(source), [], "expected no diagnostics")
 const rejected = (source, pattern) => assert.match(messages(source)[0] ?? "", pattern)
+const warned = (source, pattern) => assert.match(transform(source, "inference.slim").warnings.map(diagnostic => diagnostic.message).join("\n"), pattern)
 
 const USER = `struct User {\n    name: string\n    *nick: string\n    age: int\n}\n`
 
@@ -32,8 +33,8 @@ test("type labels round-trip through the tree", () => {
 
 test("a union is not accepted where only one of its parts fits", () => {
     rejected(`func f(v: int | string) { let n: int = v }`, /"n" expects int, got \(int \| string\)/)
-    rejected(`func f(s: string?) { let x: string = s }`, /expects string, got string\? — check it for null first/)
-    rejected(`${USER}func f(u: User) { let n: string = u.nick }`, /check it for undefined first/)
+    warned(`func f(s: string?) { let x: string = s }`, /expects string, got string\? — check it for null first/)
+    warned(`${USER}func f(u: User) { let n: string = u.nick }`, /check it for undefined first/)
 })
 
 test("checks narrow the type inside the branch", () => {
@@ -69,9 +70,9 @@ test("array, string, Map and Set methods have result types", () => {
     rejected(`${USER}func f(users: User[]) { let xs: int[] = users.map(u => u.name) }`, /"xs" expects int\[\], got string\[\]/)
     accepted(`${USER}func f(users: User[]) { let names: string[] = users.map(u => u.name) }`)
     rejected(`func f(xs: int[]) { let ys: string[] = xs.filter(x => x > 1) }`, /got int\[\]/)
-    rejected(`func f(xs: int[]) { let y: int = xs.find(x => x > 1) }`, /got \(int \| undefined\)/)
+    warned(`func f(xs: int[]) { let y: int = xs.find(x => x > 1) }`, /got \(int \| undefined\)/)
     rejected(`func f(s: string) { let parts: int[] = s.split(",") }`, /got string\[\]/)
-    rejected(`func f(m: Map<string, int>) { let v: int = m.get("a") }`, /got \(int \| undefined\)/)
+    warned(`func f(m: Map<string, int>) { let v: int = m.get("a") }`, /got \(int \| undefined\)/)
     accepted(`func f(s: string) {\n    let a: string = s.trim().toUpperCase()\n    let b: bool = s.includes("x")\n    let c: int = s.length\n}`)
     accepted(`func f(s: Set<string>) {\n    let b: bool = s.has("a")\n    let n: int = s.size\n}`)
     accepted(`let n: int = Math.floor(2.5)\nlet m: float = Math.random()`)

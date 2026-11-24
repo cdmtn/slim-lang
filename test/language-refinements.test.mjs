@@ -35,6 +35,7 @@ function diagnostics(source) {
 
 const accepted = source => assert.deepEqual(diagnostics(source).errors, [], "expected no errors")
 const rejected = (source, pattern) => assert.match(diagnostics(source).errors.join("\n"), pattern)
+const warned = (source, pattern) => assert.match(diagnostics(source).warnings.join("\n"), pattern)
 
 function project(files, config = {}) {
     const dir = mkdtempSync(path.join(tmpdir(), "slim-refine-"))
@@ -49,7 +50,7 @@ const SHAPES = `struct Circle {\n    kind: "circle"\n    r: float\n}\nstruct Squ
 test("Record checks keys and values", () => {
     rejected(`let m: Record<string, int> = { a: "x" }`, /"m"\["a"\] expects int, got string/)
     rejected(`let k: Record<"a" | "b", int> = { c: 1 }`, /"k" can't have the key "c"/)
-    rejected(`let m: Record<string, int> = { a: 1 }\nlet n: int = m.a`, /"n" expects int, got \(int \| undefined\)/)
+    warned(`let m: Record<string, int> = { a: 1 }\nlet n: int = m.a`, /"n" expects int, got \(int \| undefined\)/)
     assert.equal(run("record", `
 let m: Record<string, int> = { a: 1, b: 2 }
 log(Object.keys(m).join(","))

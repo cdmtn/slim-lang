@@ -38,6 +38,7 @@ function messages(source) {
 
 const accepted = source => assert.deepEqual(messages(source), [], "expected no diagnostics")
 const rejected = (source, pattern) => assert.match(messages(source).join("\n"), pattern)
+const warned = (source, pattern) => assert.match(transform(source, "extensions.slim").warnings.map(diagnostic => diagnostic.message).join("\n"), pattern)
 
 const SHAPES = `struct Circle {\n    kind: "circle"\n    r: float\n}\nstruct Square {\n    kind: "square"\n    side: float\n}\ntype Shape = Circle | Square\n`
 const FIGURE = `enum Figure {\n    Circle(radius: float)\n    Rect(w: float, h: float)\n    Empty\n}\n`
@@ -91,9 +92,9 @@ test("generic constraints are checked at the call and inside the body", () => {
 
 test("a value that may be null can't be read without a check", () => {
     const USER = `struct User { name: string }\n`
-    rejected(`${USER}func f(u: User?) { log(u.name) }`, /"u" may be null here \(User\?\) — check it first or use "\?\."/)
-    rejected(`${USER}func f(us: User[]) { log(us.find(u => u.name == "a").name) }`, /"us\.find\(\.\.\.\)" may be undefined/)
-    rejected(`struct A { city: string }\nstruct U { addr?: A }\nfunc f(u: U) { log(u.addr.city) }`, /"u\.addr" may be undefined/)
+    warned(`${USER}func f(u: User?) { log(u.name) }`, /"u" may be null here \(User\?\) — check it first or use "\?\."/)
+    warned(`${USER}func f(us: User[]) { log(us.find(u => u.name == "a").name) }`, /"us\.find\(\.\.\.\)" may be undefined/)
+    warned(`struct A { city: string }\nstruct U { addr?: A }\nfunc f(u: U) { log(u.addr.city) }`, /"u\.addr" may be undefined/)
     accepted(`${USER}func f(u: User?) {\n    if (u) log(u.name)\n    log(u?.name, u && u.name, u ? u.name : "")\n    if (u == null) return\n    log(u.name)\n}`)
 })
 

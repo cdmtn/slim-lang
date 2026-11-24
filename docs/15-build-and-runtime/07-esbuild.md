@@ -28,11 +28,12 @@ esbuild itself is not a dependency of Slim: install it in the project (`npm i -D
 | `globals` | names that come from elsewhere |
 | `autoImport` | `true` imports names exported by the project's files where they are used, as in [Auto-import](../09-imports/03-auto-import.md); a folder or a list of folders limits it to those |
 | `check` | `false` skips the type check |
+| `warnings` | `false` leaves compiler warnings (unused names, a value that may be `null` or `undefined`, ...) out of the build result. They are reported as esbuild warnings when left out |
 | `passes` | the most times the check goes over the project, 8 when left out |
 
 ## What happens in a build
 
-Before each build the plugin checks every file in `files`, the files a file imports before it, and goes over the project again until the types settle, so a type from one file is known in all the others whatever their order. The errors are reported as esbuild errors and the build fails. When no file has changed since the last check, the plugin reuses its result: one plugin passed to several builds checks the project once.
+Before each build the plugin checks every file in `files`, the files a file imports before it, and goes over the project again until the types settle, so a type from one file is known in all the others whatever their order. The errors are reported as esbuild errors and the build fails; warnings are reported as esbuild warnings and the build goes on. When no file has changed since the last check, the plugin reuses its result: one plugin passed to several builds checks the project once.
 
 Then esbuild loads each `.slim` file it reaches; the plugin compiles it without checking it again, with the runtime imported (`runtime: "imports"`) from the package itself, so a bundle holds one copy of the runtime, and only the parts of it the code uses: a script that calls nothing from the runtime carries about 4 KB of it, the error reporting. In [release mode](01-release-mode.md) traits and type aliases no code uses by name are left out as well. Imports between `.slim` files lead to their sources, and nothing is written to `slim-dist`.
 

@@ -31,17 +31,17 @@ struct User { name: string }
 func watch(u: User?) {
     let current = u
     if (current) {
-        setTimeout(() => log(current.name), 100)   // ❌ "current" may be null here (User?) — check it first or use "?."
+        setTimeout(() => log(current.name), 100)   // ⚠️ "current" may be null here (User?) — check it first or use "?."
     }
     current = null
 }
 ```
 
-A narrowing of a field ends when the field is written to: after `user.address = undefined`, `user.address.city` is an error again. An assignment narrows instead, so `if (!user.address) user.address = fallback` leaves `user.address` set for the code below.
+A narrowing of a field ends when the field is written to: after `user.address = undefined`, `user.address.city` is reported again. An assignment narrows instead, so `if (!user.address) user.address = fallback` leaves `user.address` set for the code below.
 
 ## Null safety
 
-A value that may be `null` or `undefined` can't be read without a check or `?.`:
+Reading a value that may be `null` or `undefined` without a check or `?.` is a warning: the build goes on and prints the place and the hint, and the value is still checked when the program runs. A value that is always `null` or `undefined` at that point (`"u" is undefined here, so it has no properties`) is an error. The same goes for passing, assigning or returning such a value where the type doesn't allow `null` or `undefined` (`"t" expects int, got (int | undefined) — check it for undefined first`).
 
 ```js
 struct Address { city: string }
@@ -51,11 +51,11 @@ struct User {
 }
 
 func city(user: User?) -> string {
-    return user.address.city      // ❌ "user" may be null here (User?) — check it first or use "?."
+    return user.address.city      // ⚠️ "user" may be null here (User?) — check it first or use "?."
 }
 
 func name(users: User[], id: int) {
-    return users.find(u => u.id == id).address  // ❌ "users.find(...)" may be undefined here
+    return users.find(u => u.id == id).address  // ⚠️ "users.find(...)" may be undefined here
 }
 ```
 
@@ -69,21 +69,21 @@ func temp(name: string) -> int {
     return temps.sunny                      // ok, the literal has "sunny"
 }
 
-const t: int = temps.snow                   // ❌ "t" expects int, got (int | undefined)
+const t: int = temps.snow                   // ⚠️ "t" expects int, got (int | undefined)
 ```
 
-An optional struct field reads as `T | undefined`. The same goes for calling a function that may be missing, such as an optional field `onClose?: () => void`: `props.onClose()` is an error, `props.onClose?.()` or a check first is fine.
+An optional struct field reads as `T | undefined`. The same goes for calling a function that may be missing, such as an optional field `onClose?: () => void`: `props.onClose()` is a warning, `props.onClose?.()` or a check first is fine.
 
-Using a possibly-null value where it would fail or give a wrong result is reported too:
+Using a possibly-null value where it would fail or give a wrong result is a warning too:
 
 ```js
 func sum(xs: int[]?, x: int?) {
-    for (const n of xs) log(n)      // ❌ "xs" may be null here (int[]?) — check it first: null can't be iterated
-    log(x + 1)                      // ❌ "x" may be null here (int?) — check it first: null in "+" gives a wrong result
+    for (const n of xs) log(n)      // ⚠️ "xs" may be null here (int[]?) — check it first: null can't be iterated
+    log(x + 1)                      // ⚠️ "x" may be null here (int?) — check it first: null in "+" gives a wrong result
 }
 
 func greet(name?: string) -> int {
-    return name.length              // ❌ "name" may be undefined here (string | undefined)
+    return name.length              // ⚠️ "name" may be undefined here (string | undefined)
 }
 ```
 

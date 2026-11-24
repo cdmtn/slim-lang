@@ -1,6 +1,6 @@
-slimconfig.json
-struct.slim
-test.slim
+/slimconfig.json
+/struct.slim
+/test.slim
 dist/
 slim-dist/
 node_modules

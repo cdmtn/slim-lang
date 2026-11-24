@@ -157,3 +157,38 @@ test("error classes keep their own tag", () => {
     assert.equal(new UseError("x").name, "UseError")
     assert.equal(new UseError("x").message, "x")
 })
+
+test("a value that may be undefined is a warning with its place and hint, not a build error", () => {
+    const source = `struct Svc { serviceList: string[] }
+let selected = { serviceList: ["x"] }
+func pick(list: Svc[], id: int) {
+    const s = list.find((x, i) => i == id)
+    selected.serviceList = s.serviceList
+    const kept: Svc = list.find(x => x.serviceList.length > 0)
+    log(kept)
+}
+`
+    const { code, warnings } = transform(source, "topbar.slim")
+    assert.ok(code.length > 0)
+    const access = warnings.find(warning => /"s" may be undefined here \(Svc \| undefined\) — check it first or use "\?\."/.test(warning.message))
+    assert.ok(access, JSON.stringify(warnings))
+    assert.equal(access.severity, "warning")
+    assert.equal(access.line, 5)
+    assert.equal(access.column, 28)
+    assert.equal(access.sourceLine.trim(), "selected.serviceList = s.serviceList")
+    assert.ok(warnings.some(warning => /"kept" expects Svc, got \(Svc \| undefined\) — check it for undefined first/.test(warning.message)), JSON.stringify(warnings))
+
+    assert.deepEqual(transform(source, "topbar.slim", { warnings: false }).warnings, [])
+    assert.throws(() => transform(`let u = undefined\nlog(u.x)\n`, "x.slim"), /"u" is undefined here, so it has no properties/)
+})
+
+test("enum stays a type: type enum gets a clear message and .d.ts and JSDoc write it as any", () => {
+    assert.throws(() => transform(`type enum(v) {\n    return true\n}\n`, "x.slim"), /"enum" is a reserved word and can't name a type — "enum" already is one/)
+
+    const source = `export enum Role { A, B }\nexport struct Item { kind?: enum\n tags: enum[] }\nexport func pick(x: enum) -> enum { return x }\n`
+    const { code, declarations } = transform(source, "x.slim", { declarations: true, jsdoc: true })
+    assert.doesNotMatch(declarations, /\benum\b/)
+    assert.match(declarations, /kind\?: any; tags: any\[\]/)
+    assert.match(declarations, /pick\(x: any\): any/)
+    assert.doesNotMatch(code.split("\n").filter(line => /@typedef|@param|@returns/.test(line)).join("\n"), /\benum\b/)
+})

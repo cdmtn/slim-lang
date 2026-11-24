@@ -162,10 +162,13 @@ export function checkValue(target, node, path_, env, report, describeTarget, phr
     const onlyNullish = present.length && present.length < atoms(actual, env).length && accepts(target, unionOf(present), env)
     const match = onlyNullish && matchExpression(node)
     if (match && !match.wildcard && missingCases(match, path_, env)?.missing.length) return
+    if (onlyNullish && !(match && !match.wildcard)) {
+        const which = atoms(actual, env).some(atom => isNamed(atom, "null")) ? "null" : "undefined"
+        env.warn?.(node, `${describeTarget} ${phrase} ${describe(target)}, got ${describe(shown)} — check it for ${which} first`)
+        return
+    }
     const hint = match && !match.wildcard
         ? ` — the match gives undefined when no case fits: cover every case or add a "_" fallback`
-        : onlyNullish
-        ? ` — check it for ${atoms(actual, env).some(atom => isNamed(atom, "null")) ? "null" : "undefined"} first`
         : valueHint(target, actual, node, env, enumValues)
     report(node, `${describeTarget} ${phrase} ${describe(target)}, got ${describe(shown)}${hint}`)
 }

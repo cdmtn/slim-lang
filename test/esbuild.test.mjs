@@ -83,6 +83,19 @@ test("check: false leaves type errors to the caller", async () => {
     }
 })
 
+test("a value that may be undefined is an esbuild warning, and warnings: false hides it", async () => {
+    const dir = project({ "src/main.slim": `struct Svc { list: int[] }\nfunc first(xs: Svc[]) -> int[]? {\n    const s = xs.find(x => x.list.length > 0)\n    return s.list\n}\nlog(first([Svc.new({ list: [1] })]))\n` })
+    try {
+        const { outfile, result } = await bundle(dir, "src/main.slim")
+        assert.ok(result.warnings.some(item => /"s" may be undefined here/.test(item.text) && /main\.slim:4:12/.test(item.text)), JSON.stringify(result.warnings))
+        assert.equal(run(outfile).output, "[ 1 ]")
+        const quiet = await bundle(dir, "src/main.slim", { warnings: false })
+        assert.deepEqual(quiet.result.warnings, [])
+    } finally {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
 test("auto-imports project exports when asked", async () => {
     const dir = project({
         "src/lib/greet.slim": `export func greet(name: string) -> string {\n    return "Hi " + name\n}\n`,

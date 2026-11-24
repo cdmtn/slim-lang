@@ -166,7 +166,7 @@ test("an imported JSON file has the type of its contents", () => {
     const head = `import d from "./data.json"\n`
     assert.ok(check(`${head}const n: number = d.techs`).some(message => /"n" expects number, got int\[\]/.test(message)))
     assert.ok(check(`${head}const r: int = d.ratio`).some(message => /"r" expects int, got float/.test(message)))
-    assert.ok(check(`${head}const t: string = d.items[0].tag`).some(message => /may be|undefined/.test(message)))
+    assert.match(transform(`${head}const t: string = d.items[0].tag`, path.join(dir, "main.slim"), { sourceMaps: false }).warnings.map(item => item.message).join("\n"), /may be|undefined/)
     assert.ok(check(`${head}log(d.nope)`).some(message => /has no field "nope"/.test(message)))
     assert.deepEqual(check(`${head}const c: int = d.count\nconst ids: int[] = d.items.map(item => item.id)\nlog(c, ids)`), [])
 })
@@ -199,12 +199,12 @@ test("a broken host file is reported again instead of breaking later files", () 
 test("k in rec and the keys of a const Record literal narrow away undefined", () => {
     accepted(`func f(rec: Record<string, int>, name: string) -> int {\n    if (name in rec) return rec[name] + 1\n    if ("x" in rec) return rec.x + rec["x"]\n    return 0\n}`)
     accepted(`func g(rec: Record<string, int>, name: string) -> int {\n    if (!(name in rec)) return 0\n    return rec[name]\n}`)
-    rejected(`func h(rec: Record<string, int>, name: string) -> int { return rec[name] }`, /may be undefined|check it for undefined/)
-    rejected(`func h(rec: Record<string, int | undefined>, name: string) -> int {\n    if (name in rec) return rec[name]\n    return 0\n}`, /undefined/)
+    warned(`func h(rec: Record<string, int>, name: string) -> int { return rec[name] }`, /may be undefined|check it for undefined/)
+    warned(`func h(rec: Record<string, int | undefined>, name: string) -> int {\n    if (name in rec) return rec[name]\n    return 0\n}`, /undefined/)
     const table = `struct W { temp: int }\nconst table: Record<string, W> = { sunny: W.new({ temp: 30 }), "rain": W.new({ temp: 10 }) }\n`
     accepted(`${table}const a: int = table.sunny.temp\nconst b: int = table["rain"].temp\nlog(a, b)`)
-    rejected(`${table}const c: int = table.snow.temp`, /"table\.snow" may be undefined/)
-    rejected(`${table}delete table.sunny\nconst a: int = table.sunny.temp`, /"table\.sunny" may be undefined/)
+    warned(`${table}const c: int = table.snow.temp`, /"table\.snow" may be undefined/)
+    warned(`${table}delete table.sunny\nconst a: int = table.sunny.temp`, /"table\.sunny" may be undefined/)
 })
 
 test("markup has the Html type", () => {

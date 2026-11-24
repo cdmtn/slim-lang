@@ -24,6 +24,11 @@ function rejected(source, pattern) {
     assert.ok(found.some(message => pattern.test(message)), `expected ${pattern}, got ${JSON.stringify(found)}`)
 }
 
+function warned(source, pattern) {
+    const found = transform(source, "check.slim").warnings.map(diagnostic => diagnostic.message)
+    assert.ok(found.some(message => pattern.test(message)), `expected ${pattern}, got ${JSON.stringify(found)}`)
+}
+
 const P = "struct P { x: string }\n"
 const OUT = "enum In {\n    A\n    B\n}\nenum Out {\n    W(i: In)\n    E\n}\n"
 
@@ -54,21 +59,21 @@ test("computed member access narrows when key and object stay put", () => {
     accepted(`func f(out: Record<string, int[]>, k: string) {\n    if (!out[k]) out[k] = []\n    out[k].push(1)\n}`)
     accepted(`func f(out: Record<string, int[]>, k: string) {\n    if (out[k] != undefined) out[k].push(1)\n}`)
     accepted(`func f(xs: (int | null)[], i: int) -> int {\n    if (xs[i] != null) return xs[i] + 1\n    return 0\n}`)
-    rejected(`func f(out: Record<string, int[]>, k: string) {\n    if (out[k] != undefined) { k = "z"; out[k].push(1) }\n}`, /"out\[k\]" may be undefined/)
-    rejected(`func f(out: Record<string, int[]>, k: string, o: Record<string, int[]>) {\n    if (out[k] != undefined) { out = o; out[k].push(1) }\n}`, /"out\[k\]" may be undefined/)
+    warned(`func f(out: Record<string, int[]>, k: string) {\n    if (out[k] != undefined) { k = "z"; out[k].push(1) }\n}`, /"out\[k\]" may be undefined/)
+    warned(`func f(out: Record<string, int[]>, k: string, o: Record<string, int[]>) {\n    if (out[k] != undefined) { out = o; out[k].push(1) }\n}`, /"out\[k\]" may be undefined/)
 })
 
 test("logical assignments narrow", () => {
     accepted(`func f() {\n    let m: Map<string, int>? = null\n    m ??= new Map()\n    m.set("a", 1)\n}`)
     accepted(`class C {\n    items?: int[]\n    add(x: int) {\n        this.items ??= []\n        this.items.push(x)\n    }\n}`)
     accepted(`func f(s: string?) -> int {\n    s ||= "x"\n    return s.length\n}`)
-    rejected(`func f(s: string?) -> int {\n    s &&= "x"\n    return s.length\n}`, /"s" may be null/)
+    warned(`func f(s: string?) -> int {\n    s &&= "x"\n    return s.length\n}`, /"s" may be null/)
 })
 
 test("else-if chains that exit narrow by every test", () => {
     accepted(`func f(x: string?, y: string?) -> int {\n    if (x == null) return 0\n    else if (y == null) return 1\n    return x.length + y.length\n}`)
     accepted(`func f(x: int | string | bool) -> int {\n    if (typeof x == "string") { return 1 } else if (typeof x == "boolean") { return 2 }\n    return x\n}`)
-    rejected(`func f(x: string?, y: string?) -> int {\n    if (x == null) return 0\n    else if (y == null) log(1)\n    return x.length + y.length\n}`, /"y" may be null/)
+    warned(`func f(x: string?, y: string?) -> int {\n    if (x == null) return 0\n    else if (y == null) log(1)\n    return x.length + y.length\n}`, /"y" may be null/)
 })
 
 test("switch narrows in default and is exhaustive after earlier narrowing", () => {
@@ -249,20 +254,20 @@ test("object shapes fit Record types", () => {
 test("computed keys with member, call and template keys", () => {
     accepted(`struct U { name: string }\nfunc f(us: U[]) {\n    const out: Record<string, U[]> = {}\n    for (const u of us) {\n        if (!out[u.name]) out[u.name] = []\n        out[u.name].push(u)\n    }\n}`)
     accepted("func f(out: Record<string, int[]>, a: string) {\n    if (!out[`x${a}`]) return\n    log(out[`x${a}`].length)\n}")
-    rejected(`func f(out: Record<string, int[]>, c: { k: string }) { log(out[c.k].length) }`, /"out\[c\.k\]" may be undefined/)
-    rejected(`func key() -> string { return "a" }\nfunc f(out: Record<string, int[]>) { log(out[key()].length) }`, /"out\[key\(\.\.\.\)\]" may be undefined/)
-    rejected(`struct U { name: string }\nfunc f(out: Record<string, int[]>, u: U) {\n    if (!out[u.name]) return\n    u.name = "z"\n    log(out[u.name].length)\n}`, /may be undefined/)
+    warned(`func f(out: Record<string, int[]>, c: { k: string }) { log(out[c.k].length) }`, /"out\[c\.k\]" may be undefined/)
+    warned(`func key() -> string { return "a" }\nfunc f(out: Record<string, int[]>) { log(out[key()].length) }`, /"out\[key\(\.\.\.\)\]" may be undefined/)
+    warned(`struct U { name: string }\nfunc f(out: Record<string, int[]>, u: U) {\n    if (!out[u.name]) return\n    u.name = "z"\n    log(out[u.name].length)\n}`, /may be undefined/)
 })
 
 test("mutations drop narrowing of indexed values", () => {
-    rejected(`func f(o: Record<string, int[]>, k: string) {\n    if (!o[k]) return\n    delete o[k]\n    log(o[k].length)\n}`, /"o\[k\]" may be undefined/)
-    rejected(`func f(xs: (int | null)[], i: int) -> int {\n    if (xs[i] == null) return 0\n    xs.shift()\n    return xs[i] + 1\n}`, /"xs\[i\]" may be null/)
-    rejected(`func f(o: Record<string, int[]>, j: string) {\n    if (!o["a"]) return\n    o[j] = undefined\n    log(o["a"].length)\n}`, /may be undefined/)
+    warned(`func f(o: Record<string, int[]>, k: string) {\n    if (!o[k]) return\n    delete o[k]\n    log(o[k].length)\n}`, /"o\[k\]" may be undefined/)
+    warned(`func f(xs: (int | null)[], i: int) -> int {\n    if (xs[i] == null) return 0\n    xs.shift()\n    return xs[i] + 1\n}`, /"xs\[i\]" may be null/)
+    warned(`func f(o: Record<string, int[]>, j: string) {\n    if (!o["a"]) return\n    o[j] = undefined\n    log(o["a"].length)\n}`, /may be undefined/)
     accepted(`func f(xs: (int | null)[], i: int) -> int {\n    if (xs[i] == null) return 0\n    xs.push(1)\n    return xs[i] + 1\n}`)
 })
 
 test("an aliased condition stops narrowing once its subject is written", () => {
-    rejected(`func f(a: string?, b: string?) -> int {\n    const ok = a != null\n    a = b\n    if (ok) return a.length\n    return 0\n}`, /"a" may be null/)
+    warned(`func f(a: string?, b: string?) -> int {\n    const ok = a != null\n    a = b\n    if (ok) return a.length\n    return 0\n}`, /"a" may be null/)
     accepted(`func f(a: string?) -> int {\n    const ok = a != null\n    if (ok) return a.length\n    return 0\n}`)
 })
 
@@ -395,7 +400,8 @@ test("host globals narrow like constants", () => {
         }
         assert.deepEqual(check(`if (kit) kit.giveItem("x")`), [])
         assert.deepEqual(check(`if (counter != null) log(counter + 1)`), [])
-        assert.ok(check(`kit.giveItem("x")`).some(message => /"kit" may be undefined/.test(message)))
+        const warnings = transform(`kit.giveItem("x")`, path.join(dir, "index.slim"), { host }).warnings.map(diagnostic => diagnostic.message)
+        assert.ok(warnings.some(message => /"kit" may be undefined/.test(message)))
         assert.ok(check(`if (counter != null) {\n    counter = null\n    log(counter + 1)\n}`).some(message => /"counter" is null here/.test(message)))
     } finally {
         rmSync(dir, { recursive: true, force: true })

@@ -21,6 +21,11 @@ function rejected(source, pattern) {
     assert.ok(found.some(message => pattern.test(message)), `expected ${pattern}, got ${JSON.stringify(found)}`)
 }
 
+function warned(source, pattern) {
+    const found = transform(source, "check.slim").warnings.map(diagnostic => diagnostic.message)
+    assert.ok(found.some(message => pattern.test(message)), `expected ${pattern}, got ${JSON.stringify(found)}`)
+}
+
 const P = "struct P { x: int }\n"
 
 test("a struct literal is checked where the target is nullable or a union", () => {
@@ -48,15 +53,15 @@ test("match and switch coverage expands bool and enums and accepts null arms", (
 test("narrowing follows loop back-edges", () => {
     accepted(`let state: "a" | "b" = "a"\nstate = "a"\nwhile (true) {\n if (state == "b") { break }\n state = "b"\n}`)
     accepted(`func f(xs: int[]) {\n let prev: int? = 1\n prev = null\n for (const x of xs) {\n  if (prev != null) log(prev + x)\n  prev = x\n }\n}`)
-    rejected(`func f(s: string?) {\n if (s == null) return\n while (true) {\n  let x: string = s\n  s = null\n }\n}`, /"x" expects string/)
+    warned(`func f(s: string?) {\n if (s == null) return\n while (true) {\n  let x: string = s\n  s = null\n }\n}`, /"x" expects string/)
 })
 
 test("optional chains carry undefined and narrow their base", () => {
     const AB = "struct B { c: int }\nstruct A { b: B }\n"
-    rejected(AB + `func f(a: A?) { let n: int = a?.b.c }`, /int \| undefined/)
+    warned(AB + `func f(a: A?) { let n: int = a?.b.c }`, /int \| undefined/)
     accepted(AB + `func f(a: A?) { let n: int? = a?.b.c\n log(n) }`)
-    rejected(`func f(s: string?) { let x: string = s?.trim()\n log(x) }`, /string \| undefined/)
-    rejected(`func f(m: Map<string, int>?) { let x: int = m?.get("a")\n log(x) }`, /undefined/)
+    warned(`func f(s: string?) { let x: string = s?.trim()\n log(x) }`, /string \| undefined/)
+    warned(`func f(m: Map<string, int>?) { let x: int = m?.get("a")\n log(x) }`, /undefined/)
     const USER = "struct User { nick?: string\n name: string }\n"
     accepted(USER + `func f(u: User?) { if (u?.nick) { let n: string = u.nick\n log(n) } }`)
     accepted(USER + `func f(u: User?) { if (u?.name != null) { let n: string = u.name\n log(n) } }`)
